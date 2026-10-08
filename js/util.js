@@ -23,7 +23,23 @@ export function detectIdentifier(q) {
   if (doi) return { type: 'doi', value: cleanDoi(doi[1]) };
   const pmid = s.match(PMID_RE);
   if (pmid) return { type: 'pmid', value: pmid[1] };
+  const isbn = s.match(/^(?:isbn(?:-1[03])?:?\s*)?([\d\s-]{9,17}[\dXx])$/i);
+  if (isbn && isValidIsbn(isbn[1])) return { type: 'isbn', value: isbn[1].replace(/[\s-]/g, '').toUpperCase() };
   return null;
+}
+
+/** ISBN-10 or ISBN-13 with a correct check digit (so random numbers don't match). */
+export function isValidIsbn(raw) {
+  const s = String(raw).replace(/[\s-]/g, '').toUpperCase();
+  if (/^\d{9}[\dX]$/.test(s)) {
+    const sum = [...s].reduce((acc, c, i) => acc + (c === 'X' ? 10 : Number(c)) * (10 - i), 0);
+    return sum % 11 === 0;
+  }
+  if (/^97[89]\d{10}$/.test(s)) {
+    const sum = [...s].reduce((acc, c, i) => acc + Number(c) * (i % 2 ? 3 : 1), 0);
+    return sum % 10 === 0;
+  }
+  return false;
 }
 
 export const cleanDoi = (d) =>

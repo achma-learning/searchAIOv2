@@ -139,7 +139,7 @@ main { max-width: 1480px; margin: 0 auto; padding: 18px 20px 30px; }
 .btn.small { height: 30px; padding: 0 10px; font-size: 13px; }
 .btn.on { border-color: var(--accent); color: var(--accent); }
 .btn.oa { color: var(--oa); border-color: color-mix(in srgb, var(--oa) 45%, var(--line)); }
-.btn.sh { color: var(--sh); border-color: color-mix(in srgb, var(--sh) 45%, var(--line)); }
+.btn.sh, .btn.aa { color: var(--sh); border-color: color-mix(in srgb, var(--sh) 45%, var(--line)); }
 .icon-btn { border: 0; background: transparent; cursor: pointer; font-size: 18px; color: var(--muted); padding: 4px 8px; border-radius: 6px; }
 .icon-btn:hover { background: var(--surface-2); }
 
@@ -350,3 +350,4 @@ main { max-width: 1480px; margin: 0 auto; padding: 18px 20px 30px; }
 .mirrors li.up span:first-child { color: var(--oa); }
 .mirrors li.down { color: var(--muted); }
 .mirrors .spinner, .settings .spinner { display: inline-block; vertical-align: -3px; width: 14px; height: 14px; }
+.mirror-head { margin: 10px 0 4px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
