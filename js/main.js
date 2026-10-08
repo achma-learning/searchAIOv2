@@ -7,7 +7,7 @@ import { ENGINES, engineByBang, engineUrl, enginesForMode, parseBang } from './e
 import * as store from './store.js';
 import * as cite from './cite.js';
 import * as gsync from './sync-google.js';
-import { ANNAS_MIRRORS, SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, annasLink, findWorkingMirror, nextMirror, normalizeMirror, normalizeOrigin, pool, probeMirror, scihubLink, unpaywallLink, unpaywallLookup } from './access.js';
+import { ANNAS_MIRRORS, ANNAS_STATUS_PAGE, MIRROR_FAMILIES, SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, annasIsbnLink, annasLink, familyLabel, familyMirrors, findWorkingMirror, nextMirror, normalizeMirror, openLibraryIsbnLink, pool, probeFor, scihubLink, unpaywallLink, unpaywallLookup } from './access.js';
 import { esc, debounce, detectIdentifier, plural, todayISO } from './util.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -84,7 +84,7 @@ const kbd = (k) => `<kbd>${esc(k)}</kbd>`;
 
 const unpaywallUrl = unpaywallLink;
 const scihubUrl = (p, mirror = S.settings.scihubMirror) => (S.settings.showScihub ? scihubLink(mirror, p) : '');
-const annasUrl = (p) => (S.settings.showScihub ? annasLink(S.settings.annasMirror, p) : '');
+const annasUrl = (p, mirror = S.settings.annasMirror) => (S.settings.showScihub ? annasLink(mirror, p) : '');
 
 /*
  * Legal free copies, found before you click. For every result with a DOI and
@@ -125,89 +125,114 @@ function updateCard(p) {
   if (i === S.sel && !isTyping(document.activeElement)) renderDetail();
 }
 
-// ⇧H walks the mirror list for the selected paper, in case the usual one is down.
-let altMirror = null;
-let altMirrorFor = null;
-function scihubNextMirror(p) {
-  if (!S.settings.showScihub) return toast('Sci-Hub button is off (Settings)');
-  if (!scihubUrl(p)) return toast('No DOI or PMID for this record');
-  altMirror = nextMirror(altMirrorFor === p.id && altMirror ? altMirror : S.settings.scihubMirror);
-  altMirrorFor = p.id;
-  if (altMirror === normalizeMirror(S.settings.scihubMirror)) altMirror = nextMirror(altMirror);
-  markScihubUsed();
-  openUrl(scihubUrl(p, altMirror));
-  toast(`Trying ${host(altMirror)} · if the paper shows, press ⇧D to make it your default`);
-}
+/* ── Mirrors (Sci-Hub, Anna's Archive): try another, keep it, auto-switch ── */
 
+const mirrorKey = (family) => `${family}Mirror`; // settings.scihubMirror / settings.annasMirror
+const usedKey = (family) => `${family}Used`;
+const linkFor = (family) => (family === 'scihub' ? scihubUrl : annasUrl);
 const host = (url) => new URL(url).hostname;
 
-function markScihubUsed() {
-  if (!S.settings.scihubUsed) setSettings({ scihubUsed: true });
+function markUsed(family) {
+  if (!S.settings[usedKey(family)]) setSettings({ [usedKey(family)]: true });
 }
 
-/** ⇧D: keep the mirror that ⇧H just opened. */
+// ⇧H (Sci-Hub) / ⇧A (Anna's Archive) walk the mirror list for the selected paper.
+let alt = null; // { family, mirror, paperId } — what ⇧D would keep
+function tryNextMirror(family, p) {
+  if (!S.settings.showScihub) return toast(`${familyLabel(family)} button is off (Settings)`);
+  if (!linkFor(family)(p)) return toast(family === 'scihub' ? 'No DOI or PMID for this record' : "No DOI — Anna's Archive SciDB needs one");
+  const current = normalizeMirror(S.settings[mirrorKey(family)], family);
+  let next = nextMirror(alt?.family === family && alt.paperId === p.id ? alt.mirror : current, family);
+  if (next === current) next = nextMirror(next, family);
+  alt = { family, mirror: next, paperId: p.id };
+  markUsed(family);
+  openUrl(linkFor(family)(p, next));
+  toast(`Trying ${host(next)} · if the paper shows, press ⇧D to make it your default`);
+}
+
+/** ⇧D: keep the mirror that ⇧H / ⇧A just opened. */
 function adoptMirror() {
-  if (!altMirror) return toast('Press ⇧H on a paper first to try another mirror');
-  setSettings({ scihubMirror: altMirror });
-  altMirror = null;
+  if (!alt) return toast("Press ⇧H (Sci-Hub) or ⇧A (Anna's Archive) on a paper first");
+  setSettings({ [mirrorKey(alt.family)]: alt.mirror });
+  toast(`Default ${familyLabel(alt.family)} mirror is now ${host(alt.mirror)}`);
+  alt = null;
   refreshLinks();
-  toast(`Default Sci-Hub mirror is now ${host(S.settings.scihubMirror)}`);
 }
 
-/** Re-render so every Sci-Hub link uses the new mirror (not while you're typing a note). */
+/** Re-render so every link uses the new mirror (not while you're typing a note). */
 function refreshLinks() {
   if (!isTyping(document.activeElement)) renderView();
 }
 
 /**
- * Daily, silent mirror check. Runs only for people who have used Sci-Hub, so
- * nobody else's browser ever contacts those domains. If the default stopped
+ * Daily, silent mirror check — only for the services you have actually used,
+ * so nobody else's browser ever contacts those domains. If the default stopped
  * answering, the first working mirror in the list becomes the new default.
+ * Anna's Archive mirrors are *verified* (its /dyn/up/ health check), so a
+ * parked domain is caught too; Sci-Hub mirrors can only be checked for "answers".
  */
 async function autoCheckMirror() {
   const s = S.settings;
-  if (!s.autoMirror || !s.showScihub || !s.scihubUsed || s.mirrorCheck === todayISO() || !navigator.onLine) return;
+  const families = MIRROR_FAMILIES.filter((f) => s[usedKey(f)]);
+  if (!s.autoMirror || !s.showScihub || !families.length || s.mirrorCheck === todayISO() || !navigator.onLine) return;
   setSettings({ mirrorCheck: todayISO() });
-  const before = s.scihubMirror;
-  const res = await findWorkingMirror(before);
-  if (!res.changed) return;
-  setSettings({ scihubMirror: res.mirror });
-  refreshLinks();
-  toast(`Sci-Hub: ${host(before)} stopped answering → switched to ${host(res.mirror)}`);
+  for (const family of families) {
+    const before = S.settings[mirrorKey(family)];
+    const res = await findWorkingMirror(before, { family });
+    if (!res.changed) continue;
+    setSettings({ [mirrorKey(family)]: res.mirror });
+    refreshLinks();
+    toast(`${familyLabel(family)}: ${host(before)} stopped working → switched to ${host(res.mirror)}`);
+  }
 }
 
-/** Settings → "Check mirrors now": probe every mirror and show the result. */
+/** Settings → "Check mirrors now": test every mirror of both services and show the result. */
 async function checkMirrorsNow() {
   const box = $('#mirror-status');
   if (!box) return;
   box.innerHTML = '<p class="muted small"><span class="spinner"></span> Checking mirrors…</p>';
-  const list = [...new Set([normalizeMirror(S.settings.scihubMirror), ...SCIHUB_MIRRORS])];
-  const up = await Promise.all(list.map((m) => probeMirror(m)));
-  const status = Object.fromEntries(list.map((m, i) => [m, up[i]]));
-  setSettings({ mirrorCheck: todayISO() });
-  const cur = normalizeMirror(S.settings.scihubMirror);
-  if (!status[cur] && S.settings.autoMirror) {
-    const first = list.find((m) => status[m]);
-    if (first) {
-      setSettings({ scihubMirror: first });
-      $('#settings-form [name="scihubMirror"]').value = first;
+  const byFamily = {};
+  await Promise.all(MIRROR_FAMILIES.map(async (family) => {
+    const cur = normalizeMirror(S.settings[mirrorKey(family)], family);
+    const list = [...new Set([cur, ...familyMirrors(family)])];
+    const up = await Promise.all(list.map((m) => probeFor(family)(m)));
+    byFamily[family] = Object.fromEntries(list.map((m, i) => [m, up[i]]));
+    const first = list.find((m) => byFamily[family][m]);
+    if (!byFamily[family][cur] && first && S.settings.autoMirror) {
+      setSettings({ [mirrorKey(family)]: first });
+      const input = $(`#settings-form [name="${mirrorKey(family)}"]`);
+      if (input) input.value = first;
       refreshLinks();
-      toast(`${host(cur)} is down → switched to ${host(first)}`);
+      toast(`${familyLabel(family)}: ${host(cur)} is down → switched to ${host(first)}`);
     }
-  }
-  renderMirrorStatus(status);
+  }));
+  setSettings({ mirrorCheck: todayISO() });
+  renderMirrorStatus(byFamily);
 }
 
-function renderMirrorStatus(status) {
+function renderMirrorStatus(byFamily) {
   const box = $('#mirror-status');
   if (!box) return;
-  const cur = normalizeMirror(S.settings.scihubMirror);
-  box.innerHTML = `<ul class="mirrors">${Object.entries(status).map(([m, ok]) => `
-    <li class="${ok ? 'up' : 'down'}"><span>${ok ? '●' : '○'} ${esc(host(m))}</span>
-      ${m === cur ? '<span class="badge saved">default</span>'
-        : ok ? `<button type="button" class="btn small" data-use-mirror="${esc(m)}">Use</button>` : '<span class="muted small">not answering</span>'}</li>`).join('')}</ul>
-    <p class="muted small">● = the mirror answers. A mirror can answer and still show a captcha instead of the paper; if that happens, pick another one.</p>`;
-  box.dataset.status = JSON.stringify(status);
+  box.innerHTML = MIRROR_FAMILIES.filter((f) => byFamily[f]).map((family) => {
+    const cur = normalizeMirror(S.settings[mirrorKey(family)], family);
+    return `<h4 class="mirror-head">${esc(familyLabel(family))}</h4><ul class="mirrors">${Object.entries(byFamily[family]).map(([m, ok]) => `
+      <li class="${ok ? 'up' : 'down'}"><span>${ok ? '●' : '○'} ${esc(host(m))}</span>
+        ${m === cur ? '<span class="badge saved">default</span>'
+          : ok ? `<button type="button" class="btn small" data-use-mirror="${esc(m)}" data-family="${family}">Use</button>`
+          : `<span class="muted small">${family === 'annas' ? 'not the archive' : 'not answering'}</span>`}</li>`).join('')}</ul>`;
+  }).join('') + `<p class="muted small">Sci-Hub ● = the mirror answers (it may still show a captcha). Anna's Archive ● = verified through the archive's own health check, so parked domains are caught.</p>`;
+  box.dataset.status = JSON.stringify(byFamily);
+}
+
+/** ISBN typed in the box: open the book itself (medical textbooks). */
+function openBook(isbn, { legal = false } = {}) {
+  if (S.settings.showScihub && !legal) {
+    markUsed('annas');
+    openUrl(annasIsbnLink(S.settings.annasMirror, isbn));
+    return toast(`Book ${isbn} → Anna's Archive · ⇧Enter for Open Library (legal loans)`);
+  }
+  openUrl(openLibraryIsbnLink(isbn));
+  toast(`Book ${isbn} → Open Library`);
 }
 
 /* ═══ persistence & sync ══════════════════════════════════════════════════ */
@@ -304,6 +329,8 @@ async function search({ append = false, raw } = {}) {
     if (!text) { input.focus(); return; }
     const bang = parseBang(text);
     if (bang) return launch(bang.engine, bang.query || S.q);
+    const id = detectIdentifier(text);
+    if (id?.type === 'isbn') return openBook(id.value);
     S.q = text;
     S.results = [];
     S.src = {};
@@ -374,7 +401,8 @@ const hasMore = () => Object.values(S.src).some((s) => s.cursor != null);
 function launch(engine, query) {
   const q = (query ?? $('#q').value).trim();
   if (!q) { toast(`Type something to send to ${engine.name}`); return; }
-  openUrl(engineUrl(engine, q));
+  if (engine.mirror) markUsed(engine.mirror);
+  openUrl(engineUrl(engine, q, { annas: S.settings.annasMirror }));
   toast(`Opened in ${engine.name}`);
 }
 
@@ -531,6 +559,10 @@ function renderSearchHint() {
     hint.innerHTML = sugg.length
       ? `${kbd('Tab')} ${sugg.map((e) => `<span class="sugg"><b>!${esc(e.bang)}</b> ${esc(e.name)}</span>`).join(' ')}`
       : 'Unknown bang — press <kbd>e</kbd> outside the box to browse engines';
+  } else if (detectIdentifier(v)?.type === 'isbn') {
+    hint.innerHTML = S.settings.showScihub
+      ? `📖 Book ISBN — ${kbd('Enter')} opens it on Anna's Archive · ${kbd('⇧ Enter')} Open Library (legal loans)`
+      : `📖 Book ISBN — ${kbd('Enter')} opens it on Open Library`;
   } else if (detectIdentifier(v)) {
     hint.textContent = `Identifier detected — looking up this exact ${detectIdentifier(v).type.toUpperCase()}`;
   } else {
@@ -665,7 +697,8 @@ function renderDetail() {
       ${un ? `<a class="btn oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer">Unpaywall ${kbd('u')}</a>` : ''}
       ${sh ? `<a class="btn sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer">Sci-Hub ${kbd('h')}</a>
         <button class="btn small sh" data-act="scihub-next" title="Mirror down? Open the same paper on the next Sci-Hub mirror">Other mirror ${kbd('⇧H')}</button>` : ''}
-      ${annasUrl(p) ? `<a class="btn small sh" href="${esc(annasUrl(p))}" target="_blank" rel="noopener noreferrer" title="Anna's Archive SciDB — when Sci-Hub doesn't have it">Anna's Archive ${kbd('a')}</a>` : ''}
+      ${annasUrl(p) ? `<a class="btn small aa" href="${esc(annasUrl(p))}" target="_blank" rel="noopener noreferrer" title="Anna's Archive SciDB — when Sci-Hub doesn't have it">Anna's Archive ${kbd('a')}</a>
+        <button class="btn small aa" data-act="annas-next" title="Domain down? Open the same paper on the next Anna's Archive domain">Other domain ${kbd('⇧A')}</button>` : ''}
     </div>
     ${p.freeVia ? `<p class="muted small">Free copy found via ${esc(p.freeVia)}</p>`
       : p.doi && !p.freeUrl && !S.settings.email ? `<p class="muted small">Tip: add your email in Settings (${kbd(',')}) and Unpaywall will mark legal free copies right in your results.</p>` : ''}
@@ -889,9 +922,9 @@ function runPalette(i) {
 
 function openHelp() {
   const rows = [
-    ['Search', [['/', 'Focus the search box'], ['Enter', 'Search in-page'], ['⇧ Enter', 'Send query to the first site of this mode'], ['!bang', 'e.g. “sepsis !has” opens HAS — Tab completes'], ['↓ / Esc', 'Leave the box to navigate results'], ['↑ (empty box)', 'Recall your last search']]],
+    ['Search', [['/', 'Focus the search box'], ['Enter', 'Search in-page'], ['⇧ Enter', 'Send query to the first site of this mode'], ['!bang', 'e.g. “sepsis !has” opens HAS — Tab completes'], ['↓ / Esc', 'Leave the box to navigate results'], ['↑ (empty box)', 'Recall your last search'], ['ISBN', "Type a book's ISBN: Enter → Anna's Archive · ⇧Enter → Open Library"]]],
     ['Modes & filters', [['1 2 3', 'General · Medical · Thesis (Alt+1/2/3 from inside a box)'], ['[ ]', 'Evidence level: guidelines → SR/MA → RCT → reviews → all'], ['f', 'Follow this search (new papers appear in Library)'], ['e', 'Send the query to any of the external sites']]],
-    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep that mirror as your default'], ['a', "Anna's Archive (when Sci-Hub lacks it)"], ['m', 'Load more']]],
+    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep the mirror ⇧H / ⇧A just opened'], ['a', "Anna's Archive (when Sci-Hub lacks it)"], ['A', "Anna's Archive on the next domain"], ['m', 'Load more']]],
     ['Library', [['s', 'Save / remove'], ['n', 'Write a note'], ['r', 'Cycle status: to-read → reading → read'], ['c', 'Copy Vancouver citation'], ['b', 'Copy BibTeX'], ['l', 'Library ⇄ search'], ['S', 'Sync with Google Drive']]],
     ['Anywhere', [['Ctrl/⌘ K', 'Command palette'], ['t', 'Light / dark / auto theme'], [',', 'Settings'], ['?', 'This help'], ['Esc', 'Close whatever is open']]],
   ];
@@ -921,8 +954,8 @@ function openSettings(focus) {
           <input name="scihubMirror" list="scihub-mirrors" value="${esc(s.scihubMirror)}" placeholder="${esc(SCIHUB_MIRRORS[0])}">
           <datalist id="scihub-mirrors">${SCIHUB_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
         </label>
-        <label class="chk"><input type="checkbox" name="autoMirror" ${s.autoMirror ? 'checked' : ''}> Switch automatically when this mirror stops answering</label>
-        <p class="muted small">Checked at most once a day, and only once you have used Sci-Hub. On a paper, ${kbd('⇧H')} tries the next mirror and ${kbd('⇧D')} keeps it.</p>
+        <label class="chk"><input type="checkbox" name="autoMirror" ${s.autoMirror ? 'checked' : ''}> Switch automatically when a Sci-Hub mirror or Anna's Archive domain stops working</label>
+        <p class="muted small">Checked at most once a day, and only for the services you have used. On a paper, ${kbd('⇧H')} tries the next Sci-Hub mirror and ${kbd('⇧D')} keeps it.</p>
         <div class="d-actions"><button type="button" class="btn small" data-cmd="check-mirrors">Check mirrors now</button>
           <a class="btn small" href="${SCIHUB_STATUS_PAGE}" target="_blank" rel="noopener noreferrer">sci-hub.works status page ↗</a></div>
         <div id="mirror-status"></div>
@@ -930,6 +963,7 @@ function openSettings(focus) {
           <input name="annasMirror" list="annas-mirrors" value="${esc(s.annasMirror)}" placeholder="${esc(ANNAS_MIRRORS[0])}">
           <datalist id="annas-mirrors">${ANNAS_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
         </label>
+        <p class="muted small">On a paper, ${kbd('⇧A')} tries the next domain and ${kbd('⇧D')} keeps it. Anna's Archive lists its official domains on its own site; <a href="${ANNAS_STATUS_PAGE}" target="_blank" rel="noopener noreferrer">SLUM ↗</a> shows which shadow-library domains are up.</p>
         <p class="muted small">Check what is legal where you live — Unpaywall only finds legal open-access copies.</p>
       </fieldset>
       <fieldset><legend>Better results (optional)</legend>
@@ -960,7 +994,7 @@ function saveSettingsForm(form) {
     showScihub: f.has('showScihub'),
     scihubMirror: normalizeMirror(f.get('scihubMirror')),
     autoMirror: f.has('autoMirror'),
-    annasMirror: normalizeOrigin(f.get('annasMirror'), ANNAS_MIRRORS[0]),
+    annasMirror: normalizeMirror(f.get('annasMirror'), 'annas'),
     oaCheck: f.has('oaCheck'),
     email: (f.get('email') || '').trim(),
     openalexKey: (f.get('openalexKey') || '').trim(),
@@ -1026,12 +1060,15 @@ function act(name, p = current()) {
     case 'scihub':
       if (!S.settings.showScihub) return toast('Sci-Hub button is off (Settings)');
       if (!scihubUrl(p)) return toast('No DOI or PMID for this record');
-      markScihubUsed();
+      markUsed('scihub');
       return openUrl(scihubUrl(p));
-    case 'scihub-next': return scihubNextMirror(p);
+    case 'scihub-next': return tryNextMirror('scihub', p);
     case 'annas':
       if (!S.settings.showScihub) return toast("Anna's Archive button is off (Settings)");
-      return annasUrl(p) ? openUrl(annasUrl(p)) : toast("No DOI — Anna's Archive SciDB needs one");
+      if (!annasUrl(p)) return toast("No DOI — Anna's Archive SciDB needs one");
+      markUsed('annas');
+      return openUrl(annasUrl(p));
+    case 'annas-next': return tryNextMirror('annas', p);
     case 'detail':
       S.detail = !S.detail;
       return renderDetail();
@@ -1114,6 +1151,7 @@ function onKey(e) {
     H: () => act('scihub-next'),
     D: () => adoptMirror(),
     a: () => act('annas'),
+    A: () => act('annas-next'),
     s: () => act('save'),
     c: () => act('cite'),
     b: () => act('bibtex'),
@@ -1144,6 +1182,8 @@ function onSearchKey(e) {
     e.preventDefault();
     const bang = parseBang(input.value);
     if (bang) return launch(bang.engine, bang.query);
+    const id = detectIdentifier(input.value);
+    if (id?.type === 'isbn') return openBook(id.value, { legal: true });
     const first = enginesForMode(S.mode)[0];
     if (first) launch(first, input.value);
     return;
@@ -1178,7 +1218,8 @@ function onSearchKey(e) {
 }
 
 function onClick(e) {
-  if (e.target.closest('a.sh')) markScihubUsed(); // clicked a Sci-Hub link
+  if (e.target.closest('a.sh')) markUsed('scihub'); // clicked a Sci-Hub link
+  if (e.target.closest('a.aa')) markUsed('annas');
   const t = e.target.closest('[data-mode],[data-lens],[data-bang],[data-cmd],[data-act],[data-recent],[data-libstatus],[data-follow-run],[data-follow-del],[data-pal],[data-close],[data-use-mirror],.card');
   if (!t) return;
   const d = t.dataset;
@@ -1192,11 +1233,13 @@ function onClick(e) {
   if (d.followDel) { setLibrary(store.removeFollow(S.library, d.followDel)); return renderFollows(); }
   if (d.pal) return runPalette(Number(d.pal));
   if (d.useMirror) {
-    setSettings({ scihubMirror: d.useMirror });
-    $('#settings-form [name="scihubMirror"]').value = d.useMirror;
+    const family = d.family || 'scihub';
+    setSettings({ [mirrorKey(family)]: d.useMirror });
+    const input = $(`#settings-form [name="${mirrorKey(family)}"]`);
+    if (input) input.value = d.useMirror;
     renderMirrorStatus(JSON.parse($('#mirror-status').dataset.status || '{}'));
     refreshLinks();
-    return toast(`Default Sci-Hub mirror is now ${host(d.useMirror)}`);
+    return toast(`Default ${familyLabel(family)} mirror is now ${host(d.useMirror)}`);
   }
   if (d.act) {
     const card = t.closest('.card');

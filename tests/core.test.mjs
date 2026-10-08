@@ -221,7 +221,7 @@ test('Unpaywall lookup: 404 = no copy, DOI encoded, email sent', async () => {
 
 test("Anna's Archive SciDB link + origin normalising", () => {
   assert.equal(annasLink('annas-archive.gd/', { doi: '10.1038/nature12373' }), 'https://annas-archive.gd/scidb/10.1038/nature12373');
-  assert.equal(annasLink('', { doi: '10.1/x' }), 'https://annas-archive.li/scidb/10.1/x');
+  assert.equal(annasLink('', { doi: '10.1/X' }), 'https://annas-archive.gd/scidb/10.1/x'); // lowercased, like SciDB itself
   assert.equal(annasLink('https://annas-archive.li', { pmid: '1' }), '');
   assert.equal(normalizeOrigin('not a url ::', 'fb'), 'fb');
 });
@@ -232,4 +232,43 @@ test('pool never runs more than `limit` at once', async () => {
   await pool([1, 2, 3, 4, 5, 6, 7], 3, async (n) => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 5)); done.push(n); live--; });
   assert.equal(peak, 3);
   assert.equal(done.length, 7);
+});
+
+import { verifyAnnas, annasIsbnLink, openLibraryIsbnLink, ANNAS_MIRRORS } from '../js/access.js';
+import { isValidIsbn } from '../js/util.js';
+
+test('ISBN: detected only with a valid check digit', () => {
+  assert.deepEqual(detectIdentifier('978-0-07-180215-4'), { type: 'isbn', value: '9780071802154' });
+  assert.deepEqual(detectIdentifier('ISBN: 0-07-180215-0'), { type: 'isbn', value: '0071802150' });
+  assert.equal(detectIdentifier('9780071802155'), null); // wrong check digit
+  assert.equal(detectIdentifier('1234567890'), null);
+  assert.equal(detectIdentifier('31234567').type, 'pmid'); // PMIDs untouched
+  assert.ok(isValidIsbn('080442957X'));
+  assert.equal(annasIsbnLink('annas-archive.gl', '9780071802154'), 'https://annas-archive.gl/isbn/9780071802154');
+  assert.equal(openLibraryIsbnLink('9780071802154'), 'https://openlibrary.org/isbn/9780071802154');
+});
+
+test("Anna's Archive mirrors: verified via /dyn/up/, parked domains rejected", async () => {
+  const reply = (body, ok = true) => async () => ({ ok, text: async () => body });
+  assert.equal(await verifyAnnas('https://annas-archive.gd', { fetchImpl: reply('{"aa_logged_in":0}') }), true);
+  assert.equal(await verifyAnnas('https://annas-archive.li', { fetchImpl: reply('<!DOCTYPE html><title>annas-archive.li</title>') }), false);
+  assert.equal(await verifyAnnas('https://x', { fetchImpl: reply('{"other":1}') }), false);
+  assert.equal(await verifyAnnas('https://x', { fetchImpl: async () => { throw new TypeError('CORS'); } }), false);
+  let asked = '';
+  await verifyAnnas('annas-archive.pk/', { fetchImpl: async (u) => { asked = u; return { ok: true, text: async () => '{}' }; } });
+  assert.equal(asked, 'https://annas-archive.pk/dyn/up/');
+  assert.equal(ANNAS_MIRRORS[0], 'https://annas-archive.gd');
+
+  const up = new Set(['https://annas-archive.gl']);
+  const res = await findWorkingMirror('https://annas-archive.li', { family: 'annas', probe: async (m) => up.has(m) });
+  assert.deepEqual([res.mirror, res.changed], ['https://annas-archive.gl', true]);
+  assert.equal(nextMirror('https://annas-archive.gd', 'annas'), 'https://annas-archive.gl');
+});
+
+test("Anna's launchers follow the chosen domain", () => {
+  const e = engineByBang('annab');
+  assert.equal(engineUrl(e, 'harrison internal medicine'), 'https://annas-archive.gd/search?q=harrison%20internal%20medicine&content=book_nonfiction&ext=pdf');
+  assert.equal(engineUrl(e, 'x', { annas: 'https://annas-archive.pk' }), 'https://annas-archive.pk/search?q=x&content=book_nonfiction&ext=pdf');
+  assert.equal(engineUrl(engineByBang('annaj'), 'sepsis', { annas: 'https://annas-archive.gl/' }), 'https://annas-archive.gl/search?index=journals&q=sepsis');
+  assert.equal(engineUrl(engineByBang('pm'), 'x', { annas: 'https://annas-archive.gl' }), 'https://pubmed.ncbi.nlm.nih.gov/?term=x');
 });

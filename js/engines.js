@@ -54,7 +54,12 @@ export const ENGINES = [
   { bang: 'doaj',    name: 'DOAJ (OA journals)',  modes: ['general'], url: 'https://doaj.org/search/articles?source=%7B%22query%22%3A%7B%22query_string%22%3A%7B%22query%22%3A%22{q}%22%2C%22default_operator%22%3A%22AND%22%7D%7D%7D' },
   { bang: 'arxiv',   name: 'arXiv',               modes: ['general'], url: 'https://arxiv.org/search/?query={q}&searchtype=all' },
   { bang: 'medrxiv', name: 'medRxiv',             modes: [],          url: 'https://www.medrxiv.org/search/{q}' },
-  { bang: 'anna',    name: "Anna's Archive",      modes: [],          url: 'https://annas-archive.li/search?q={q}' },
+  // Anna's Archive: `mirror` makes the URL follow your chosen domain (Settings).
+  { bang: 'anna',    name: "Anna's Archive · everything", modes: [], mirror: 'annas', url: 'https://annas-archive.gd/search?q={q}' },
+  { bang: 'annab',   name: "Anna's Archive · textbooks (PDF)", modes: [], mirror: 'annas', url: 'https://annas-archive.gd/search?q={q}&content=book_nonfiction&ext=pdf' },
+  { bang: 'annafr',  name: "Anna's Archive · livres en français", modes: [], mirror: 'annas', url: 'https://annas-archive.gd/search?q={q}&content=book_nonfiction&lang=fr' },
+  { bang: 'annaj',   name: "Anna's Archive · journal articles", modes: [], mirror: 'annas', url: 'https://annas-archive.gd/search?index=journals&q={q}' },
+  { bang: 'ol',      name: 'Open Library (books, legal loans)', modes: [], url: 'https://openlibrary.org/search?q={q}' },
   { bang: 'libgen',  name: 'Library Genesis',     modes: [],          url: 'https://libgen.li/index.php?req={q}' },
   { bang: 'claude',  name: 'Claude',              modes: [],          url: 'https://claude.ai/new?q={q}' },
   { bang: 'gpt',     name: 'ChatGPT',             modes: [],          url: 'https://chatgpt.com/?q={q}' },
@@ -65,7 +70,13 @@ const BY_BANG = new Map(ENGINES.map((e) => [e.bang, e]));
 export const engineByBang = (bang) => BY_BANG.get(String(bang || '').toLowerCase());
 export const enginesForMode = (mode) => ENGINES.filter((e) => e.modes.includes(mode));
 
-export const engineUrl = (engine, query) => engine.url.replaceAll('{q}', encodeURIComponent(query.trim()));
+/** `origins` = { annas: 'https://annas-archive.gl' } swaps in the mirror the user chose. */
+export function engineUrl(engine, query, origins = {}) {
+  let url = engine.url.replaceAll('{q}', encodeURIComponent(query.trim()));
+  const origin = engine.mirror && origins[engine.mirror];
+  if (origin) url = origin.replace(/\/+$/, '') + url.slice(new URL(url).origin.length);
+  return url;
+}
 
 /**
  * Find a known `!bang` anywhere in the line (rightmost wins, like DuckDuckGo).
