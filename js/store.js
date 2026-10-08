@@ -15,6 +15,9 @@ export const DEFAULT_SETTINGS = {
   defaultMode: 'medical',
   scihubMirror: DEFAULT_SCIHUB,
   showScihub: true,
+  autoMirror: true, // switch to a working Sci-Hub mirror when the default stops answering
+  scihubUsed: false, // the mirror check only runs for people who actually use Sci-Hub
+  mirrorCheck: '', // date of the last automatic check
   email: '', // optional: Crossref polite pool / OpenAlex
   openalexKey: '',
   googleClientId: '',

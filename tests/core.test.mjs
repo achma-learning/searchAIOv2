@@ -175,3 +175,28 @@ test('Unpaywall link needs a DOI', () => {
   assert.equal(unpaywallLink({ doi: '10.1/x' }), 'https://unpaywall.org/10.1/x');
   assert.equal(unpaywallLink({ pmid: '1' }), '');
 });
+
+import { findWorkingMirror, probeMirror } from '../js/access.js';
+
+test('mirror check: keeps a working default, switches away from a dead one', async () => {
+  const up = (set) => async (m) => set.has(m);
+  const [ru, ee, vg] = SCIHUB_MIRRORS;
+
+  const keep = await findWorkingMirror(ru, { probe: up(new Set([ru, ee])) });
+  assert.deepEqual([keep.mirror, keep.changed], [ru, false]);
+
+  // .ru down → first reachable mirror in list order wins
+  const sw = await findWorkingMirror(ru, { probe: up(new Set([vg, ee])) });
+  assert.deepEqual([sw.mirror, sw.changed], [ee, true]);
+  assert.equal(sw.status[ru], false);
+
+  const none = await findWorkingMirror(ru, { probe: up(new Set()) });
+  assert.deepEqual([none.mirror, none.changed], [null, false]);
+});
+
+test('mirror probe: network error or timeout = down', async () => {
+  assert.equal(await probeMirror('https://sci-hub.ru', { fetchImpl: async () => ({}) }), true);
+  assert.equal(await probeMirror('https://sci-hub.ru', { fetchImpl: async () => { throw new TypeError('Failed to fetch'); } }), false);
+  const hang = (_, { signal }) => new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('abort'))));
+  assert.equal(await probeMirror('https://sci-hub.ru', { timeout: 20, fetchImpl: hang }), false);
+});

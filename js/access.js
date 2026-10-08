@@ -47,3 +47,37 @@ export function nextMirror(current) {
 }
 
 export const unpaywallLink = (paper) => (paper?.doi ? `https://unpaywall.org/${encodeURI(paper.doi)}` : '');
+
+/**
+ * Is this mirror reachable? A cross-origin page can't read another site's
+ * response, but a `no-cors` request still fails on DNS, connection, TLS or
+ * timeout errors — exactly how a dead mirror looks. (This is the same check
+ * sci-hub.works runs; it can't see captcha pages, only "up" vs "down".)
+ */
+export async function probeMirror(mirror, { timeout = 6000, fetchImpl = globalThis.fetch } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    await fetchImpl(`${normalizeMirror(mirror)}/`, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', signal: ctrl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Keep `current` if it answers; otherwise return the first reachable mirror
+ * in list order (the list is ordered by how reliably each one serves papers).
+ * Returns { mirror, changed, status } — `mirror` is null if nothing answered.
+ */
+export async function findWorkingMirror(current, { mirrors = SCIHUB_MIRRORS, probe = probeMirror } = {}) {
+  const cur = normalizeMirror(current);
+  if (await probe(cur)) return { mirror: cur, changed: false, status: { [cur]: true } };
+  const others = mirrors.filter((m) => m !== cur);
+  const results = await Promise.all(others.map((m) => probe(m)));
+  const status = { [cur]: false, ...Object.fromEntries(others.map((m, i) => [m, results[i]])) };
+  const found = others.find((_, i) => results[i]) || null;
+  return { mirror: found, changed: Boolean(found), status };
+}

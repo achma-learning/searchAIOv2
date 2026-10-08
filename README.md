@@ -23,7 +23,8 @@ Use `[` and `]` to move between the levels: **Guidelines & statements → System
 Every result with a DOI has two buttons:
 
 - **Unpaywall** (`u`) sends you to a legal open-access copy of the same paper (author manuscript, repository or publisher OA) when one exists.
-- **Sci-Hub** (`h`) opens the paper at `<mirror>/<DOI or PMID>` on the mirror set in Settings (default `https://sci-hub.ru`). If a mirror is down, **`⇧H`** opens the same paper on the next mirror in the list. [sci-hub.works](https://sci-hub.works) is a *status page* that lists working mirrors; it isn't a mirror itself, so it can't open papers. The app replaces it automatically if it is set. You can pick another mirror or hide the button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
+- **Sci-Hub** (`h`) opens the paper at `<mirror>/<DOI or PMID>` on the mirror set in Settings (default `https://sci-hub.ru`). If a mirror is down, **`⇧H`** opens the same paper on the next mirror in the list, and **`⇧D`** keeps that mirror as your default.
+  - **The default switches automatically.** Once a day, and only if you have used Sci-Hub, the app checks whether your mirror still answers. If it doesn't, the first working mirror in the list becomes your default and a short message tells you. *Settings → Check mirrors now* shows every mirror's status. A mirror can answer and still show a captcha instead of the paper; the check can't see that, so the list is ordered by which mirrors actually served papers when tested. [sci-hub.works](https://sci-hub.works) is a *status page* that lists working mirrors; it isn't a mirror itself, so it can't open papers. The app replaces it automatically if it is set. You can pick another mirror or hide the button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
 - When the source already knows a free version (a PMC article or a DUMAS PDF), a green **Free full text** button (`p`) appears.
 
 ---
@@ -40,7 +41,7 @@ Every action has a key. Single-letter keys work whenever you are not typing in a
 | `[` `]` | evidence level |
 | `j` `k` / `↓` `↑` | move through results · `gg` / `G` first / last · `m` load more |
 | `Enter` | details pane (abstract, citation, notes) |
-| `o` `p` `u` `h` `H` | open record · free full text · Unpaywall · Sci-Hub · Sci-Hub on the next mirror |
+| `o` `p` `u` `h` `H` `D` | open record · free full text · Unpaywall · Sci-Hub · Sci-Hub on the next mirror · keep that mirror |
 | `s` `n` `r` | save · note · reading status (to-read → reading → read) |
 | `c` `b` | copy Vancouver citation · copy BibTeX |
 | `f` | follow this search, so new papers show up in the Library |
