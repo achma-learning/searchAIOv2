@@ -48,6 +48,14 @@ export const ENGINES = [
   { bang: 'yt',      name: 'YouTube',             modes: ['general'], url: 'https://www.youtube.com/results?search_query={q}' },
   { bang: 'pplx',    name: 'Perplexity',          modes: ['general'], url: 'https://www.perplexity.ai/search?q={q}' },
   { bang: 'consensus', name: 'Consensus',         modes: ['general'], url: 'https://consensus.app/results/?q={q}' },
+
+  // ── Open access & free full text ────────────────────────────────────────
+  { bang: 'core',    name: 'CORE (open access)',  modes: ['general'], url: 'https://core.ac.uk/search/?q={q}' },
+  { bang: 'doaj',    name: 'DOAJ (OA journals)',  modes: ['general'], url: 'https://doaj.org/search/articles?source=%7B%22query%22%3A%7B%22query_string%22%3A%7B%22query%22%3A%22{q}%22%2C%22default_operator%22%3A%22AND%22%7D%7D%7D' },
+  { bang: 'arxiv',   name: 'arXiv',               modes: ['general'], url: 'https://arxiv.org/search/?query={q}&searchtype=all' },
+  { bang: 'medrxiv', name: 'medRxiv',             modes: [],          url: 'https://www.medrxiv.org/search/{q}' },
+  { bang: 'anna',    name: "Anna's Archive",      modes: [],          url: 'https://annas-archive.li/search?q={q}' },
+  { bang: 'libgen',  name: 'Library Genesis',     modes: [],          url: 'https://libgen.li/index.php?req={q}' },
   { bang: 'claude',  name: 'Claude',              modes: [],          url: 'https://claude.ai/new?q={q}' },
   { bang: 'gpt',     name: 'ChatGPT',             modes: [],          url: 'https://chatgpt.com/?q={q}' },
   { bang: 'bing',    name: 'Bing',                modes: [],          url: 'https://www.bing.com/search?q={q}' },

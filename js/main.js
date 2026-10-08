@@ -7,7 +7,7 @@ import { ENGINES, engineByBang, engineUrl, enginesForMode, parseBang } from './e
 import * as store from './store.js';
 import * as cite from './cite.js';
 import * as gsync from './sync-google.js';
-import { SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, findWorkingMirror, nextMirror, normalizeMirror, probeMirror, scihubLink, unpaywallLink } from './access.js';
+import { ANNAS_MIRRORS, SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, annasLink, findWorkingMirror, nextMirror, normalizeMirror, normalizeOrigin, pool, probeMirror, scihubLink, unpaywallLink, unpaywallLookup } from './access.js';
 import { esc, debounce, detectIdentifier, plural, todayISO } from './util.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -84,6 +84,46 @@ const kbd = (k) => `<kbd>${esc(k)}</kbd>`;
 
 const unpaywallUrl = unpaywallLink;
 const scihubUrl = (p, mirror = S.settings.scihubMirror) => (S.settings.showScihub ? scihubLink(mirror, p) : '');
+const annasUrl = (p) => (S.settings.showScihub ? annasLink(S.settings.annasMirror, p) : '');
+
+/*
+ * Legal free copies, found before you click. For every result with a DOI and
+ * no known free link, ask Unpaywall (5 at a time, cached for the session).
+ * A hit turns on the green "Free PDF / Free full text" button (key p).
+ * Unpaywall asks callers for an email address, so this runs only once you
+ * have set one in Settings — it then receives the DOIs of your results.
+ */
+const oaCache = new Map(); // doi → { url, pdf, via } | null
+
+function applyOa(p) {
+  const hit = p.doi && oaCache.get(p.doi.toLowerCase());
+  if (!hit || p.freeUrl) return false;
+  Object.assign(p, { freeUrl: hit.url, freePdf: hit.pdf, freeVia: hit.via });
+  return true;
+}
+
+async function findFreeCopies(papers) {
+  if (!S.settings.oaCheck || !S.settings.email) return;
+  for (const p of papers) if (applyOa(p)) updateCard(p);
+  const todo = papers.filter((p) => p.doi && !p.freeUrl && !oaCache.has(p.doi.toLowerCase()));
+  await pool(todo, 5, async (p) => {
+    const key = p.doi.toLowerCase();
+    if (oaCache.has(key)) return applyOa(p) && updateCard(p);
+    try { oaCache.set(key, await unpaywallLookup(p.doi, S.settings.email)); } catch { return; } // offline: try again next time
+    if (applyOa(p)) updateCard(p);
+  });
+}
+
+/** Re-render one card in place (and the detail pane if it shows that paper). */
+function updateCard(p) {
+  const root = S.view === 'library' ? $('#lib-results') : $('#results');
+  const i = list().findIndex((x) => x === p || x.id === p.id);
+  if (i < 0) return;
+  if (list()[i] !== p) applyOa(list()[i]);
+  const el = $(`#card-${i}`, root);
+  if (el) el.outerHTML = card(list()[i], i);
+  if (i === S.sel && !isTyping(document.activeElement)) renderDetail();
+}
 
 // ⇧H walks the mirror list for the selected paper, in case the usual one is down.
 let altMirror = null;
@@ -313,8 +353,10 @@ async function search({ append = false, raw } = {}) {
   S.results = append ? S.results.concat(fresh) : fresh;
   S.loading = false;
   if (!append && S.results.length && S.sel < 0 && window.matchMedia('(min-width: 1100px)').matches) S.sel = 0;
+  fresh.forEach(applyOa);
   renderResults();
   renderDetail();
+  findFreeCopies(fresh);
 }
 
 async function loadLensCounts() {
@@ -537,7 +579,7 @@ function card(p, i) {
     ${p.abstract ? `<p class="card-abs">${esc(p.abstract.slice(0, 420))}</p>` : ''}
     ${S.view === 'library' && lib?.note ? `<p class="card-note">✎ ${esc(lib.note)}</p>` : ''}
     <div class="card-actions">
-      ${p.freeUrl ? `<a class="act free" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="Free full text (p)">Free full text ${kbd('p')}</a>` : ''}
+      ${p.freeUrl ? `<a class="act free" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || 'Free full text')} (p)">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="act oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer" title="Find a legal free copy via Unpaywall (u)">Unpaywall ${kbd('u')}</a>` : ''}
       ${sh ? `<a class="act sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer" title="Open via Sci-Hub (h)">Sci-Hub ${kbd('h')}</a>` : ''}
       <button class="act ${saved ? 'on' : ''}" data-act="save" data-i="${i}" title="Save / unsave (s)">${saved ? '★ Saved' : '☆ Save'} ${kbd('s')}</button>
@@ -619,11 +661,14 @@ function renderDetail() {
     <div class="d-badges">${(p.badges || []).map(badge).join('')}</div>
     <div class="d-actions">
       <a class="btn" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Open record ${kbd('o')}</a>
-      ${p.freeUrl ? `<a class="btn primary" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer">Free full text ${kbd('p')}</a>` : ''}
+      ${p.freeUrl ? `<a class="btn primary" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || '')}">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="btn oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer">Unpaywall ${kbd('u')}</a>` : ''}
       ${sh ? `<a class="btn sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer">Sci-Hub ${kbd('h')}</a>
         <button class="btn small sh" data-act="scihub-next" title="Mirror down? Open the same paper on the next Sci-Hub mirror">Other mirror ${kbd('⇧H')}</button>` : ''}
+      ${annasUrl(p) ? `<a class="btn small sh" href="${esc(annasUrl(p))}" target="_blank" rel="noopener noreferrer" title="Anna's Archive SciDB — when Sci-Hub doesn't have it">Anna's Archive ${kbd('a')}</a>` : ''}
     </div>
+    ${p.freeVia ? `<p class="muted small">Free copy found via ${esc(p.freeVia)}</p>`
+      : p.doi && !p.freeUrl && !S.settings.email ? `<p class="muted small">Tip: add your email in Settings (${kbd(',')}) and Unpaywall will mark legal free copies right in your results.</p>` : ''}
     ${p.keywords?.length ? `<p class="d-kw">${p.keywords.slice(0, 12).map((k) => `<span class="chip static">${esc(k)}</span>`).join('')}</p>` : ''}
     <h3>Abstract</h3>
     <p class="d-abs">${p.abstract ? esc(p.abstract) : '<span class="muted">No abstract in this record — open it or try the free-access buttons.</span>'}</p>
@@ -692,10 +737,12 @@ function renderLibrary() {
     `<button class="lens ${S.libStatus === s ? 'on' : ''}" data-libstatus="${s}">${s}<span class="lens-n">${s === 'all' ? all.length : counts[s]}</span></button>`).join('');
   renderFollows();
   const items = libraryList();
+  items.forEach(applyOa);
   $('#lib-results').innerHTML = items.length
     ? `<div class="cards">${items.map(card).join('')}</div>`
     : `<div class="empty small"><h2>${all.length ? 'No saved paper matches this filter.' : 'Your library is empty.'}</h2>
        <p>Press ${kbd('s')} on any result to keep it here with your notes, tags and reading status. Export to Zotero/Mendeley (RIS), LaTeX (BibTeX) or a spreadsheet (CSV) anytime.</p></div>`;
+  findFreeCopies(items);
 }
 
 function renderView() {
@@ -844,7 +891,7 @@ function openHelp() {
   const rows = [
     ['Search', [['/', 'Focus the search box'], ['Enter', 'Search in-page'], ['⇧ Enter', 'Send query to the first site of this mode'], ['!bang', 'e.g. “sepsis !has” opens HAS — Tab completes'], ['↓ / Esc', 'Leave the box to navigate results'], ['↑ (empty box)', 'Recall your last search']]],
     ['Modes & filters', [['1 2 3', 'General · Medical · Thesis (Alt+1/2/3 from inside a box)'], ['[ ]', 'Evidence level: guidelines → SR/MA → RCT → reviews → all'], ['f', 'Follow this search (new papers appear in Library)'], ['e', 'Send the query to any of the external sites']]],
-    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep that mirror as your default'], ['m', 'Load more']]],
+    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep that mirror as your default'], ['a', "Anna's Archive (when Sci-Hub lacks it)"], ['m', 'Load more']]],
     ['Library', [['s', 'Save / remove'], ['n', 'Write a note'], ['r', 'Cycle status: to-read → reading → read'], ['c', 'Copy Vancouver citation'], ['b', 'Copy BibTeX'], ['l', 'Library ⇄ search'], ['S', 'Sync with Google Drive']]],
     ['Anywhere', [['Ctrl/⌘ K', 'Command palette'], ['t', 'Light / dark / auto theme'], [',', 'Settings'], ['?', 'This help'], ['Esc', 'Close whatever is open']]],
   ];
@@ -866,7 +913,10 @@ function openSettings(focus) {
         <button type="button" class="btn small" data-cmd="clear-history">Clear recent searches</button>
       </fieldset>
       <fieldset><legend>Free access</legend>
-        <label class="chk"><input type="checkbox" name="showScihub" ${s.showScihub ? 'checked' : ''}> Show the Sci-Hub button</label>
+        <label>Your email <input name="email" type="email" value="${esc(s.email)}" placeholder="you@example.org"></label>
+        <label class="chk"><input type="checkbox" name="oaCheck" ${s.oaCheck ? 'checked' : ''}> Mark legal free copies in results (Unpaywall)</label>
+        <p class="muted small">Unpaywall asks for an email, so this only works once you set one. It then receives the DOIs of your results (not your search words) and turns on the green ${kbd('p')} button wherever a free copy exists. Crossref and OpenAlex also get your email as a courtesy, which gives faster, more reliable answers.</p>
+        <label class="chk"><input type="checkbox" name="showScihub" ${s.showScihub ? 'checked' : ''}> Show the Sci-Hub and Anna's Archive buttons</label>
         <label>Sci-Hub mirror
           <input name="scihubMirror" list="scihub-mirrors" value="${esc(s.scihubMirror)}" placeholder="${esc(SCIHUB_MIRRORS[0])}">
           <datalist id="scihub-mirrors">${SCIHUB_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
@@ -876,11 +926,13 @@ function openSettings(focus) {
         <div class="d-actions"><button type="button" class="btn small" data-cmd="check-mirrors">Check mirrors now</button>
           <a class="btn small" href="${SCIHUB_STATUS_PAGE}" target="_blank" rel="noopener noreferrer">sci-hub.works status page ↗</a></div>
         <div id="mirror-status"></div>
+        <label>Anna's Archive domain
+          <input name="annasMirror" list="annas-mirrors" value="${esc(s.annasMirror)}" placeholder="${esc(ANNAS_MIRRORS[0])}">
+          <datalist id="annas-mirrors">${ANNAS_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
+        </label>
         <p class="muted small">Check what is legal where you live — Unpaywall only finds legal open-access copies.</p>
       </fieldset>
       <fieldset><legend>Better results (optional)</legend>
-        <label>Email <input name="email" type="email" value="${esc(s.email)}" placeholder="you@example.org"></label>
-        <p class="muted small">Sent only to Crossref/OpenAlex as a courtesy (“polite pool” — faster, more reliable).</p>
         <label>OpenAlex API key <input name="openalexKey" value="${esc(s.openalexKey)}" placeholder="free at openalex.org/settings/api"></label>
         <p class="muted small">Adds OpenAlex (250 M works, open-access links) to General and Thesis modes.</p>
       </fieldset>
@@ -908,6 +960,8 @@ function saveSettingsForm(form) {
     showScihub: f.has('showScihub'),
     scihubMirror: normalizeMirror(f.get('scihubMirror')),
     autoMirror: f.has('autoMirror'),
+    annasMirror: normalizeOrigin(f.get('annasMirror'), ANNAS_MIRRORS[0]),
+    oaCheck: f.has('oaCheck'),
     email: (f.get('email') || '').trim(),
     openalexKey: (f.get('openalexKey') || '').trim(),
     googleClientId: (f.get('googleClientId') || '').trim(),
@@ -916,6 +970,7 @@ function saveSettingsForm(form) {
   renderMode();
   renderView();
   renderSyncPill();
+  findFreeCopies(list()); // a newly added email lights up free copies at once
   toast('Settings saved');
 }
 
@@ -974,6 +1029,9 @@ function act(name, p = current()) {
       markScihubUsed();
       return openUrl(scihubUrl(p));
     case 'scihub-next': return scihubNextMirror(p);
+    case 'annas':
+      if (!S.settings.showScihub) return toast("Anna's Archive button is off (Settings)");
+      return annasUrl(p) ? openUrl(annasUrl(p)) : toast("No DOI — Anna's Archive SciDB needs one");
     case 'detail':
       S.detail = !S.detail;
       return renderDetail();
@@ -1055,6 +1113,7 @@ function onKey(e) {
     h: () => act('scihub'),
     H: () => act('scihub-next'),
     D: () => adoptMirror(),
+    a: () => act('annas'),
     s: () => act('save'),
     c: () => act('cite'),
     b: () => act('bibtex'),

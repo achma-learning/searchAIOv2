@@ -200,3 +200,36 @@ test('mirror probe: network error or timeout = down', async () => {
   const hang = (_, { signal }) => new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('abort'))));
   assert.equal(await probeMirror('https://sci-hub.ru', { timeout: 20, fetchImpl: hang }), false);
 });
+
+import { parseUnpaywall, unpaywallLookup, annasLink, normalizeOrigin, pool } from '../js/access.js';
+
+test('Unpaywall: best free copy, labelled', () => {
+  const hit = parseUnpaywall({ best_oa_location: { url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/7745181', url_for_pdf: null, host_type: 'repository', version: 'acceptedVersion', license: 'cc-by' } });
+  assert.deepEqual(hit, { url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/7745181', pdf: false, via: 'Unpaywall · repository · accepted manuscript · cc-by' });
+  assert.equal(parseUnpaywall({ best_oa_location: { url_for_pdf: 'x.pdf', url: 'x', host_type: 'publisher' } }).pdf, true);
+  assert.equal(parseUnpaywall({ is_oa: false, best_oa_location: null }), null);
+});
+
+test('Unpaywall lookup: 404 = no copy, DOI encoded, email sent', async () => {
+  let called = '';
+  const ok = await unpaywallLookup('10.1/a b', 'me@x.org', { fetchImpl: async (u) => { called = u; return { ok: true, status: 200, json: async () => ({ best_oa_location: { url: 'u' } }) }; } });
+  assert.equal(called, 'https://api.unpaywall.org/v2/10.1%2Fa%20b?email=me%40x.org');
+  assert.equal(ok.url, 'u');
+  assert.equal(await unpaywallLookup('10.1/x', 'e', { fetchImpl: async () => ({ ok: false, status: 404 }) }), null);
+  await assert.rejects(unpaywallLookup('10.1/x', 'e', { fetchImpl: async () => ({ ok: false, status: 500 }) }));
+});
+
+test("Anna's Archive SciDB link + origin normalising", () => {
+  assert.equal(annasLink('annas-archive.gd/', { doi: '10.1038/nature12373' }), 'https://annas-archive.gd/scidb/10.1038/nature12373');
+  assert.equal(annasLink('', { doi: '10.1/x' }), 'https://annas-archive.li/scidb/10.1/x');
+  assert.equal(annasLink('https://annas-archive.li', { pmid: '1' }), '');
+  assert.equal(normalizeOrigin('not a url ::', 'fb'), 'fb');
+});
+
+test('pool never runs more than `limit` at once', async () => {
+  let live = 0, peak = 0;
+  const done = [];
+  await pool([1, 2, 3, 4, 5, 6, 7], 3, async (n) => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 5)); done.push(n); live--; });
+  assert.equal(peak, 3);
+  assert.equal(done.length, 7);
+});

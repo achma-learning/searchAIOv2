@@ -1,6 +1,6 @@
 // Offline app shell. API calls always go to the network (results must be fresh);
 // the app itself loads instantly and works offline for your saved library.
-const CACHE = 'saio2-v3';
+const CACHE = 'saio2-v4';
 const SHELL = [
   './', 'index.html', 'config.js', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg',
   'js/main.js', 'js/modes.js', 'js/engines.js', 'js/store.js', 'js/cite.js', 'js/util.js', 'js/access.js', 'js/sync-google.js',
