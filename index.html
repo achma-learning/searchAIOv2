@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Keyboard-driven medical literature & thesis search. Private by default.">
+  <meta name="theme-color" content="#0f6e6e">
+  <title>searchAIO · Med</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Apply the saved theme before first paint (no flash).
+    try { const t = JSON.parse(localStorage.getItem('saio2.settings') || '{}').theme; if (t && t !== 'auto') document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#q">Skip to search</a>
+
+  <header class="top">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="26" height="26">
+      <span class="brand-name">searchAIO<span class="brand-tag">med</span></span>
+    </div>
+
+    <nav class="modes" role="tablist" aria-label="Search mode" id="modes"></nav>
+
+    <div class="top-actions">
+      <button class="nav-btn" id="nav-library" data-cmd="library" title="Library (l)">
+        <span>Library</span><span class="count" id="lib-count" hidden></span><span class="new-dot" id="lib-new" hidden></span>
+      </button>
+      <button class="nav-btn icon" id="sync-pill" data-cmd="sync" title="Google sync" hidden></button>
+      <button class="nav-btn icon" data-cmd="palette" title="Command palette (Ctrl+K)" aria-label="Command palette">⌘K</button>
+      <button class="nav-btn icon" data-cmd="settings" title="Settings (,)" aria-label="Settings">⚙</button>
+      <button class="nav-btn icon" data-cmd="help" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- SEARCH VIEW -->
+    <section id="view-search" class="view">
+      <form id="search-form" class="search" role="search" autocomplete="off">
+        <label class="sr-only" for="q">Search</label>
+        <div class="search-row">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="q" name="q" type="search" spellcheck="false" autocapitalize="off" enterkeyhint="search">
+          <kbd class="search-kbd" aria-hidden="true">/</kbd>
+          <button type="submit" class="btn primary">Search</button>
+        </div>
+        <div class="search-hint" id="search-hint" aria-live="polite"></div>
+      </form>
+
+      <div class="controls">
+        <div class="lenses" id="lenses" role="radiogroup" aria-label="Evidence level"></div>
+        <div class="filters" id="filters">
+          <label>From <input type="number" id="f-from" min="1800" max="2100" placeholder="year" inputmode="numeric"></label>
+          <label>To <input type="number" id="f-to" min="1800" max="2100" placeholder="year" inputmode="numeric"></label>
+          <label class="chk" id="f-free-wrap"><input type="checkbox" id="f-free"> Free full text only</label>
+          <label class="chk" id="f-health-wrap"><input type="checkbox" id="f-health" checked> Health sciences only</label>
+          <label>Sort
+            <select id="f-sort">
+              <option value="relevance">Relevance</option>
+              <option value="newest">Newest</option>
+              <option value="cited">Most cited</option>
+            </select>
+          </label>
+        </div>
+        <div class="launchers" id="launchers"></div>
+      </div>
+
+      <div class="workspace">
+        <div class="results" id="results" aria-live="polite"></div>
+        <aside class="detail" id="detail" aria-label="Article details" hidden></aside>
+      </div>
+    </section>
+
+    <!-- LIBRARY VIEW -->
+    <section id="view-library" class="view" hidden>
+      <div class="lib-head">
+        <div>
+          <h1>Library</h1>
+          <p class="muted" id="lib-sub">Saved in this browser.</p>
+        </div>
+        <div class="lib-tools">
+          <button class="btn" data-cmd="export-bib">BibTeX</button>
+          <button class="btn" data-cmd="export-ris">RIS</button>
+          <button class="btn" data-cmd="export-csv">CSV</button>
+          <button class="btn" data-cmd="export-json" title="Full backup">Backup</button>
+          <button class="btn" data-cmd="import-json" title="Restore / merge a backup">Import</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+        </div>
+      </div>
+      <div id="follows"></div>
+      <div class="lib-filter">
+        <input id="lib-q" type="search" placeholder="Filter saved papers (title, author, note, tag)…" spellcheck="false">
+        <div class="lib-status" id="lib-status"></div>
+      </div>
+      <div class="workspace">
+        <div class="results" id="lib-results"></div>
+        <aside class="detail" id="lib-detail" aria-label="Article details" hidden></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar" id="statusbar" aria-hidden="true"></footer>
+
+  <!-- dialogs -->
+  <dialog id="dlg-palette" class="dlg palette" aria-label="Command palette">
+    <input id="pal-q" type="text" placeholder="Type a command, engine or recent search…" spellcheck="false" autocomplete="off">
+    <ul id="pal-list" role="listbox"></ul>
+  </dialog>
+  <dialog id="dlg-help" class="dlg" aria-labelledby="help-title"></dialog>
+  <dialog id="dlg-settings" class="dlg" aria-labelledby="settings-title"></dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

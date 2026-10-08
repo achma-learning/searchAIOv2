@@ -1,1 +1,128 @@
-# searchAIO v2
+# searchAIO · med (v2)
+
+A keyboard-driven search tool for medicine. It is built for **MD students preparing their thesis**, and it stays useful afterwards for **clinicians keeping up to date** and for **researchers and professors**.
+
+It is private by default. There's no account, no tracking and no server of ours. Your library stays in your browser unless you turn on Google Drive sync.
+
+---
+
+## Three search modes
+
+| Key | Mode | What answers in the page | Sites one keystroke away |
+|---|---|---|---|
+| `1` | **General** | Crossref (≈150 M records, every discipline), plus OpenAlex if you add a free key | Google, DuckDuckGo, Scholar, Semantic Scholar, Wikipedia, Perplexity… |
+| `2` | **Medical** *(default)* | Europe PMC (all of PubMed, PMC and preprints), starting with **guidelines and statements from learned societies and recognised bodies** | PubMed, Trip, Cochrane, HAS, NICE, WHO IRIS, CISMeF, ESC, Min. Santé Maroc… |
+| `3` | **Thesis** | DUMAS/HAL (French MD *thèses d'exercice*, usually with the PDF) and theses.fr (doctoral theses, with supervisor) | Toubkal (Maroc), FMPM theses, CISMeF thèses, SUDOC, OATD… |
+
+### Evidence pyramid lenses (Medical mode)
+
+Use `[` and `]` to move between the levels: **Guidelines & statements → Systematic reviews / meta-analyses → RCTs → Narrative reviews → Everything**. Each level shows how many hits it has for your query, so you can see at a glance how much evidence of each kind exists.
+
+### Read the full text, legally or not
+
+Every result with a DOI has two buttons:
+
+- **Unpaywall** (`u`) sends you to a legal open-access copy of the same paper (author manuscript, repository or publisher OA) when one exists.
+- **Sci-Hub** (`h`) opens the paper through the mirror set in Settings (default `https://sci-hub.works`). You can change the mirror or hide this button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
+- When the source already knows a free version (a PMC article or a DUMAS PDF), a green **Free full text** button (`p`) appears.
+
+---
+
+## Keyboard
+
+Every action has a key. Single-letter keys work whenever you are not typing in a box.
+
+| | |
+|---|---|
+| `/` | focus search · `Enter` search · `⇧ Enter` send the query to the mode's first site |
+| `!bang` | `sepsis !has` opens HAS, `!pm` PubMed, `!toubkal` Toubkal (`Tab` completes, `e` lists all) |
+| `1` `2` `3` | General · Medical · Thesis (`Alt+1/2/3` from inside a box) |
+| `[` `]` | evidence level |
+| `j` `k` / `↓` `↑` | move through results · `gg` / `G` first / last · `m` load more |
+| `Enter` | details pane (abstract, citation, notes) |
+| `o` `p` `u` `h` | open record · free full text · Unpaywall · Sci-Hub |
+| `s` `n` `r` | save · note · reading status (to-read → reading → read) |
+| `c` `b` | copy Vancouver citation · copy BibTeX |
+| `f` | follow this search, so new papers show up in the Library |
+| `l` | Library ⇄ search · `S` sync · `Ctrl/⌘ K` command palette · `?` help · `t` theme |
+
+Searches are URLs (`?mode=thesis&q=…`), so you can bookmark them, share them, or **add the tool as a browser search engine** with the template `https://<your-site>/?q=%s`.
+
+---
+
+## Library: built for a thesis, still useful afterwards
+
+- Save with `s`. Each saved paper can have a **note**, **tags** and a **reading status**.
+- Export to **RIS** (Zotero, Mendeley, EndNote), **BibTeX** (LaTeX), **CSV** (spreadsheet) or a **JSON backup**. Import merges a backup into your library without overwriting it.
+- **Followed searches** (`f`) are for staying up to date after the diploma. Once a day the app counts papers published since you last looked (Medical mode) and puts a dot on *Library* when something is new.
+
+## Privacy and optional Google sync
+
+- By default everything (library, notes, history, settings) is stored in your browser's `localStorage`. Search queries go only to the source you are searching. The page sends `no-referrer` and loads no fonts, analytics or trackers.
+- **Sync with Google is opt-in.** Google's script is loaded only when you click *Connect*. Sync uses the `drive.appdata` scope, which is a hidden app folder in **your own** Drive: the site cannot see any of your other files. The token is kept in memory only. When two devices change the library, the merge keeps the newest edit of each paper, and deletions sync too because they are kept as tombstones.
+
+To enable sync on your deployment:
+
+1. In [Google Cloud Console](https://console.cloud.google.com), enable the **Google Drive API**.
+2. Under Credentials, choose **Create OAuth client ID → Web application** and add your site origin (e.g. `https://<user>.github.io`) to *Authorized JavaScript origins*.
+3. On the OAuth consent screen, add the scope `…/auth/drive.appdata`.
+4. Put the client ID in [`config.js`](./config.js). It is safe to commit because a client ID is public. Each user can also paste their own ID in Settings → Sync.
+
+---
+
+## Run it
+
+There is no build step and there are no dependencies. Because ES modules need `http://`, you can't open the file directly with `file://`.
+
+```bash
+python3 -m http.server 8000      # then open http://localhost:8000
+npm test                         # unit tests (Node ≥ 20, no install needed)
+```
+
+**Deploy:** enable GitHub Pages on `main` / root and the site works as is. It is also an installable PWA: the app shell works offline, and only searches need the network.
+
+## How it works
+
+```
+index.html            page skeleton (dialogs, regions)
+css/app.css           one stylesheet, light/dark, system fonts
+config.js             deploy-time config (Google client ID)
+js/main.js            state → render functions → one keyboard layer
+js/modes.js           the 3 modes: which sources answer, which lenses exist
+js/engines.js         external sites + !bangs ({q} URL templates)
+js/sources/*.js       one adapter per open API → common "paper" shape
+js/cite.js            Vancouver, BibTeX, RIS, CSV
+js/store.js           local-first library, merge, follows, settings
+js/sync-google.js     optional Drive appData sync
+sw.js                 offline app shell
+tests/                node:test unit tests of all pure logic
+```
+
+Every source adapter returns the same shape: `{ id, title, authors, year, venue, doi, pmid, abstract, badges, url, freeUrl, … }`. The `id` is built from the DOI when there is one, so a paper found by two sources is shown and saved only once. When a mode has several sources, they run in parallel and their result lists are **interleaved by rank** (each source's #1, then each #2, and so on), so no source drowns out the others.
+
+**Add an external site:** add one line to `ENGINES` in `js/engines.js`. The test suite checks that bangs are unique and that every URL contains `{q}`.
+**Add an API:** write `js/sources/<name>.js` exporting `{ id, label, supports, search() }` and list it in a mode in `js/modes.js`.
+
+## What v2 changes from the two earlier projects
+
+| | [achma-learning/searchAIO](https://github.com/achma-learning/searchAIO) | [maa384/searchAIO](https://github.com/maa384/searchAIO) | **v2** |
+|---|---|---|---|
+| Idea | a 6 000-line single-file *launcher*: prefix/!bang → opens 55+ sites | a React/Supabase *workspace*: Europe PMC results, save, notes | **both**: in-page results from open APIs and one-keystroke launching to sites without an API |
+| Results in page | no | Europe PMC only | Europe PMC, Crossref, HAL/DUMAS, theses.fr, OpenAlex |
+| Thesis search | links only | no | real results with supervisor and PDF, plus Moroccan sources as launchers |
+| Evidence level | no | one type filter | guideline → SR/MA → RCT → review lenses with live counts |
+| Free access | no | no | Unpaywall, Sci-Hub, direct PMC/DUMAS PDF |
+| Keyboard | search box only | none | whole app (vim-style + palette) |
+| Saved data | none | localStorage | localStorage + optional Drive sync + RIS/BibTeX/CSV + follows |
+| Stack | no build, but one huge file | ~60 npm deps, vendor-locked builder | no build, no deps, small modules, unit-tested, CI |
+
+## Roadmap ideas
+
+- French/Arabic interface strings (the UI is English for now; queries work in any language).
+- Unpaywall API check that shows "free copy found / not found" before you click (needs an email setting).
+- PRISMA screening mode: include/exclude reasons and counts for systematic-review theses.
+- Moroccan thesis repositories, if any of them publishes an open API.
+
+## License
+
+No license has been chosen yet. Add one (the original searchAIO uses MIT) before inviting outside contributions.
