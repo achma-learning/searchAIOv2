@@ -151,3 +151,27 @@ test('follows: add / remove', () => {
   lib = store.removeFollow(lib, store.followId({ mode: 'medical', q: 'sepsis', lens: 'guidelines' }));
   assert.equal(store.liveFollows(lib).length, 0);
 });
+
+import { normalizeMirror, scihubLink, nextMirror, SCIHUB_MIRRORS, DEFAULT_SCIHUB, unpaywallLink } from '../js/access.js';
+
+test('Sci-Hub: the sci-hub.works directory is never used as a mirror', () => {
+  assert.equal(normalizeMirror('https://sci-hub.works'), DEFAULT_SCIHUB);
+  assert.equal(normalizeMirror('https://sci-hub.works/'), DEFAULT_SCIHUB);
+  assert.equal(normalizeMirror(''), DEFAULT_SCIHUB);
+  assert.equal(normalizeMirror('sci-hub.ee/'), 'https://sci-hub.ee');
+  assert.equal(normalizeMirror('https://sci-hub.vg/some/path'), 'https://sci-hub.vg');
+  assert.equal(scihubLink('https://sci-hub.works', { doi: '10.1038/nature12373' }), `${DEFAULT_SCIHUB}/10.1038/nature12373`);
+  assert.equal(scihubLink('https://sci-hub.ee', { pmid: '23903748' }), 'https://sci-hub.ee/23903748');
+  assert.equal(scihubLink('https://sci-hub.ee', { title: 'no ids' }), '');
+});
+
+test('Sci-Hub: next mirror cycles through the list', () => {
+  assert.equal(nextMirror(SCIHUB_MIRRORS[0]), SCIHUB_MIRRORS[1]);
+  assert.equal(nextMirror(SCIHUB_MIRRORS.at(-1)), SCIHUB_MIRRORS[0]);
+  assert.equal(nextMirror('https://my-own-mirror.example'), SCIHUB_MIRRORS[0]);
+});
+
+test('Unpaywall link needs a DOI', () => {
+  assert.equal(unpaywallLink({ doi: '10.1/x' }), 'https://unpaywall.org/10.1/x');
+  assert.equal(unpaywallLink({ pmid: '1' }), '');
+});

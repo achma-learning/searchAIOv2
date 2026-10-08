@@ -2,6 +2,7 @@
 // you choose to sync. The library is a CRDT-lite: every record carries
 // `updatedAt`, deletions are kept as tombstones, so two devices can merge
 // without losing work (last edit of each record wins).
+import { DEFAULT_SCIHUB, normalizeMirror } from './access.js';
 
 const LIB_KEY = 'saio2.library';
 const SETTINGS_KEY = 'saio2.settings';
@@ -12,7 +13,7 @@ export const STATUSES = ['to-read', 'reading', 'read'];
 export const DEFAULT_SETTINGS = {
   theme: 'auto', // auto | light | dark
   defaultMode: 'medical',
-  scihubMirror: 'https://sci-hub.works',
+  scihubMirror: DEFAULT_SCIHUB,
   showScihub: true,
   email: '', // optional: Crossref polite pool / OpenAlex
   openalexKey: '',
@@ -38,7 +39,12 @@ export function loadLibrary() {
 }
 export const saveLibrary = (lib) => write(LIB_KEY, lib);
 
-export const loadSettings = () => ({ ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) });
+export function loadSettings() {
+  const s = { ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) };
+  // v2.0 defaulted to sci-hub.works, a mirror *directory*: repair it silently.
+  s.scihubMirror = normalizeMirror(s.scihubMirror);
+  return s;
+}
 export const saveSettings = (s) => write(SETTINGS_KEY, s);
 
 export const loadHistory = () => read(HISTORY_KEY, []);

@@ -23,7 +23,7 @@ Use `[` and `]` to move between the levels: **Guidelines & statements → System
 Every result with a DOI has two buttons:
 
 - **Unpaywall** (`u`) sends you to a legal open-access copy of the same paper (author manuscript, repository or publisher OA) when one exists.
-- **Sci-Hub** (`h`) opens the paper through the mirror set in Settings (default `https://sci-hub.works`). You can change the mirror or hide this button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
+- **Sci-Hub** (`h`) opens the paper at `<mirror>/<DOI or PMID>` on the mirror set in Settings (default `https://sci-hub.ru`). If a mirror is down, **`⇧H`** opens the same paper on the next mirror in the list. [sci-hub.works](https://sci-hub.works) is a *status page* that lists working mirrors; it isn't a mirror itself, so it can't open papers. The app replaces it automatically if it is set. You can pick another mirror or hide the button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
 - When the source already knows a free version (a PMC article or a DUMAS PDF), a green **Free full text** button (`p`) appears.
 
 ---
@@ -40,7 +40,7 @@ Every action has a key. Single-letter keys work whenever you are not typing in a
 | `[` `]` | evidence level |
 | `j` `k` / `↓` `↑` | move through results · `gg` / `G` first / last · `m` load more |
 | `Enter` | details pane (abstract, citation, notes) |
-| `o` `p` `u` `h` | open record · free full text · Unpaywall · Sci-Hub |
+| `o` `p` `u` `h` `H` | open record · free full text · Unpaywall · Sci-Hub · Sci-Hub on the next mirror |
 | `s` `n` `r` | save · note · reading status (to-read → reading → read) |
 | `c` `b` | copy Vancouver citation · copy BibTeX |
 | `f` | follow this search, so new papers show up in the Library |
@@ -92,6 +92,7 @@ js/modes.js           the 3 modes: which sources answer, which lenses exist
 js/engines.js         external sites + !bangs ({q} URL templates)
 js/sources/*.js       one adapter per open API → common "paper" shape
 js/cite.js            Vancouver, BibTeX, RIS, CSV
+js/access.js          Unpaywall + Sci-Hub links, mirror list
 js/store.js           local-first library, merge, follows, settings
 js/sync-google.js     optional Drive appData sync
 sw.js                 offline app shell
