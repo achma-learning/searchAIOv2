@@ -351,3 +351,20 @@ main { max-width: 1480px; margin: 0 auto; padding: 18px 20px 30px; }
 .mirrors li.down { color: var(--muted); }
 .mirrors .spinner, .settings .spinner { display: inline-block; vertical-align: -3px; width: 14px; height: 14px; }
 .mirror-head { margin: 10px 0 4px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+
+/* Click-to-copy DOI / PMID */
+.copy-id {
+  position: relative;
+  padding: 0 6px; border: 1px dashed transparent; border-radius: 5px;
+  background: none; cursor: copy; font: 12px var(--mono); color: var(--muted);
+}
+.copy-id:hover, .copy-id:focus-visible { border-color: var(--line); color: var(--accent); }
+.copy-id.copied { color: var(--oa); border-color: var(--oa); }
+.copy-id:hover::after, .copy-id:focus-visible::after, .copy-id.copied::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  padding: 3px 8px; border-radius: 6px; background: var(--text); color: var(--bg);
+  font: 600 11.5px var(--font); white-space: nowrap; pointer-events: none; z-index: 5;
+}
+.d-ids { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.act.aa { color: var(--sh); }
