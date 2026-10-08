@@ -2,7 +2,7 @@
 // you choose to sync. The library is a CRDT-lite: every record carries
 // `updatedAt`, deletions are kept as tombstones, so two devices can merge
 // without losing work (last edit of each record wins).
-import { DEFAULT_SCIHUB, normalizeMirror } from './access.js';
+import { DEFAULT_ANNAS, DEFAULT_SCIHUB, normalizeMirror, normalizeOrigin } from './access.js';
 
 const LIB_KEY = 'saio2.library';
 const SETTINGS_KEY = 'saio2.settings';
@@ -14,8 +14,13 @@ export const DEFAULT_SETTINGS = {
   theme: 'auto', // auto | light | dark
   defaultMode: 'medical',
   scihubMirror: DEFAULT_SCIHUB,
-  showScihub: true,
-  email: '', // optional: Crossref polite pool / OpenAlex
+  showScihub: true, // Sci-Hub + Anna's Archive buttons
+  annasMirror: DEFAULT_ANNAS,
+  oaCheck: true, // ask Unpaywall which results have a legal free copy (needs `email`)
+  autoMirror: true, // switch to a working Sci-Hub mirror when the default stops answering
+  scihubUsed: false, // the mirror check only runs for people who actually use Sci-Hub
+  mirrorCheck: '', // date of the last automatic check
+  email: '', // optional: Unpaywall free-copy check, Crossref polite pool, OpenAlex
   openalexKey: '',
   googleClientId: '',
   history: true,
@@ -43,6 +48,7 @@ export function loadSettings() {
   const s = { ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) };
   // v2.0 defaulted to sci-hub.works, a mirror *directory*: repair it silently.
   s.scihubMirror = normalizeMirror(s.scihubMirror);
+  s.annasMirror = normalizeOrigin(s.annasMirror, DEFAULT_ANNAS);
   return s;
 }
 export const saveSettings = (s) => write(SETTINGS_KEY, s);

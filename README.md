@@ -10,7 +10,7 @@ It is private by default. There's no account, no tracking and no server of ours.
 
 | Key | Mode | What answers in the page | Sites one keystroke away |
 |---|---|---|---|
-| `1` | **General** | Crossref (≈150 M records, every discipline), plus OpenAlex if you add a free key | Google, DuckDuckGo, Scholar, Semantic Scholar, Wikipedia, Perplexity… |
+| `1` | **General** | Crossref (≈150 M records, every discipline), plus OpenAlex if you add a free key | Google, DuckDuckGo, Scholar, Semantic Scholar, Wikipedia, Perplexity, CORE, DOAJ, arXiv… |
 | `2` | **Medical** *(default)* | Europe PMC (all of PubMed, PMC and preprints), starting with **guidelines and statements from learned societies and recognised bodies** | PubMed, Trip, Cochrane, HAS, NICE, WHO IRIS, CISMeF, ESC, Min. Santé Maroc… |
 | `3` | **Thesis** | DUMAS/HAL (French MD *thèses d'exercice*, usually with the PDF) and theses.fr (doctoral theses, with supervisor) | Toubkal (Maroc), FMPM theses, CISMeF thèses, SUDOC, OATD… |
 
@@ -23,8 +23,10 @@ Use `[` and `]` to move between the levels: **Guidelines & statements → System
 Every result with a DOI has two buttons:
 
 - **Unpaywall** (`u`) sends you to a legal open-access copy of the same paper (author manuscript, repository or publisher OA) when one exists.
-- **Sci-Hub** (`h`) opens the paper at `<mirror>/<DOI or PMID>` on the mirror set in Settings (default `https://sci-hub.ru`). If a mirror is down, **`⇧H`** opens the same paper on the next mirror in the list. [sci-hub.works](https://sci-hub.works) is a *status page* that lists working mirrors; it isn't a mirror itself, so it can't open papers. The app replaces it automatically if it is set. You can pick another mirror or hide the button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
-- When the source already knows a free version (a PMC article or a DUMAS PDF), a green **Free full text** button (`p`) appears.
+- **Sci-Hub** (`h`) opens the paper at `<mirror>/<DOI or PMID>` on the mirror set in Settings (default `https://sci-hub.ru`). If a mirror is down, **`⇧H`** opens the same paper on the next mirror in the list, and **`⇧D`** keeps that mirror as your default.
+  - **The default switches automatically.** Once a day, and only if you have used Sci-Hub, the app checks whether your mirror still answers. If it doesn't, the first working mirror in the list becomes your default and a short message tells you. *Settings → Check mirrors now* shows every mirror's status. A mirror can answer and still show a captcha instead of the paper; the check can't see that, so the list is ordered by which mirrors actually served papers when tested. [sci-hub.works](https://sci-hub.works) is a *status page* that lists working mirrors; it isn't a mirror itself, so it can't open papers. The app replaces it automatically if it is set. You can pick another mirror or hide the button in Settings. *Whether using Sci-Hub is legal depends on your country, and that responsibility is yours.*
+- **Legal free copies are marked before you click.** Add your email in Settings and the app asks Unpaywall about every result that has a DOI. A green **Free PDF / Free full text** button (`p`) then appears wherever a free copy exists; hover it to see where the copy comes from (repository or publisher, which version, which license). PMC articles and DUMAS PDFs get the button without any setup. Unpaywall receives the DOIs of your results, not your search words, and nothing is sent until you set an email.
+- **Anna's Archive** (`a`) opens the paper on Anna's Archive at `/scidb/<DOI>`. It's a fallback for when Sci-Hub doesn't have the paper, and it shows or hides together with the Sci-Hub button.
 
 ---
 
@@ -40,7 +42,7 @@ Every action has a key. Single-letter keys work whenever you are not typing in a
 | `[` `]` | evidence level |
 | `j` `k` / `↓` `↑` | move through results · `gg` / `G` first / last · `m` load more |
 | `Enter` | details pane (abstract, citation, notes) |
-| `o` `p` `u` `h` `H` | open record · free full text · Unpaywall · Sci-Hub · Sci-Hub on the next mirror |
+| `o` `p` `u` `h` `H` `D` `a` | open record · free full text · Unpaywall · Sci-Hub · Sci-Hub on the next mirror · keep that mirror · Anna's Archive |
 | `s` `n` `r` | save · note · reading status (to-read → reading → read) |
 | `c` `b` | copy Vancouver citation · copy BibTeX |
 | `f` | follow this search, so new papers show up in the Library |
@@ -120,7 +122,6 @@ Every source adapter returns the same shape: `{ id, title, authors, year, venue,
 ## Roadmap ideas
 
 - French/Arabic interface strings (the UI is English for now; queries work in any language).
-- Unpaywall API check that shows "free copy found / not found" before you click (needs an email setting).
 - PRISMA screening mode: include/exclude reasons and counts for systematic-review theses.
 - Moroccan thesis repositories, if any of them publishes an open API.
 

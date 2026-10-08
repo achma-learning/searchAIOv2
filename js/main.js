@@ -7,7 +7,7 @@ import { ENGINES, engineByBang, engineUrl, enginesForMode, parseBang } from './e
 import * as store from './store.js';
 import * as cite from './cite.js';
 import * as gsync from './sync-google.js';
-import { SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, nextMirror, normalizeMirror, scihubLink, unpaywallLink } from './access.js';
+import { ANNAS_MIRRORS, SCIHUB_MIRRORS, SCIHUB_STATUS_PAGE, annasLink, findWorkingMirror, nextMirror, normalizeMirror, normalizeOrigin, pool, probeMirror, scihubLink, unpaywallLink, unpaywallLookup } from './access.js';
 import { esc, debounce, detectIdentifier, plural, todayISO } from './util.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -84,6 +84,46 @@ const kbd = (k) => `<kbd>${esc(k)}</kbd>`;
 
 const unpaywallUrl = unpaywallLink;
 const scihubUrl = (p, mirror = S.settings.scihubMirror) => (S.settings.showScihub ? scihubLink(mirror, p) : '');
+const annasUrl = (p) => (S.settings.showScihub ? annasLink(S.settings.annasMirror, p) : '');
+
+/*
+ * Legal free copies, found before you click. For every result with a DOI and
+ * no known free link, ask Unpaywall (5 at a time, cached for the session).
+ * A hit turns on the green "Free PDF / Free full text" button (key p).
+ * Unpaywall asks callers for an email address, so this runs only once you
+ * have set one in Settings — it then receives the DOIs of your results.
+ */
+const oaCache = new Map(); // doi → { url, pdf, via } | null
+
+function applyOa(p) {
+  const hit = p.doi && oaCache.get(p.doi.toLowerCase());
+  if (!hit || p.freeUrl) return false;
+  Object.assign(p, { freeUrl: hit.url, freePdf: hit.pdf, freeVia: hit.via });
+  return true;
+}
+
+async function findFreeCopies(papers) {
+  if (!S.settings.oaCheck || !S.settings.email) return;
+  for (const p of papers) if (applyOa(p)) updateCard(p);
+  const todo = papers.filter((p) => p.doi && !p.freeUrl && !oaCache.has(p.doi.toLowerCase()));
+  await pool(todo, 5, async (p) => {
+    const key = p.doi.toLowerCase();
+    if (oaCache.has(key)) return applyOa(p) && updateCard(p);
+    try { oaCache.set(key, await unpaywallLookup(p.doi, S.settings.email)); } catch { return; } // offline: try again next time
+    if (applyOa(p)) updateCard(p);
+  });
+}
+
+/** Re-render one card in place (and the detail pane if it shows that paper). */
+function updateCard(p) {
+  const root = S.view === 'library' ? $('#lib-results') : $('#results');
+  const i = list().findIndex((x) => x === p || x.id === p.id);
+  if (i < 0) return;
+  if (list()[i] !== p) applyOa(list()[i]);
+  const el = $(`#card-${i}`, root);
+  if (el) el.outerHTML = card(list()[i], i);
+  if (i === S.sel && !isTyping(document.activeElement)) renderDetail();
+}
 
 // ⇧H walks the mirror list for the selected paper, in case the usual one is down.
 let altMirror = null;
@@ -94,8 +134,80 @@ function scihubNextMirror(p) {
   altMirror = nextMirror(altMirrorFor === p.id && altMirror ? altMirror : S.settings.scihubMirror);
   altMirrorFor = p.id;
   if (altMirror === normalizeMirror(S.settings.scihubMirror)) altMirror = nextMirror(altMirror);
+  markScihubUsed();
   openUrl(scihubUrl(p, altMirror));
-  toast(`Trying ${new URL(altMirror).hostname} — set it as default in Settings if it works`);
+  toast(`Trying ${host(altMirror)} · if the paper shows, press ⇧D to make it your default`);
+}
+
+const host = (url) => new URL(url).hostname;
+
+function markScihubUsed() {
+  if (!S.settings.scihubUsed) setSettings({ scihubUsed: true });
+}
+
+/** ⇧D: keep the mirror that ⇧H just opened. */
+function adoptMirror() {
+  if (!altMirror) return toast('Press ⇧H on a paper first to try another mirror');
+  setSettings({ scihubMirror: altMirror });
+  altMirror = null;
+  refreshLinks();
+  toast(`Default Sci-Hub mirror is now ${host(S.settings.scihubMirror)}`);
+}
+
+/** Re-render so every Sci-Hub link uses the new mirror (not while you're typing a note). */
+function refreshLinks() {
+  if (!isTyping(document.activeElement)) renderView();
+}
+
+/**
+ * Daily, silent mirror check. Runs only for people who have used Sci-Hub, so
+ * nobody else's browser ever contacts those domains. If the default stopped
+ * answering, the first working mirror in the list becomes the new default.
+ */
+async function autoCheckMirror() {
+  const s = S.settings;
+  if (!s.autoMirror || !s.showScihub || !s.scihubUsed || s.mirrorCheck === todayISO() || !navigator.onLine) return;
+  setSettings({ mirrorCheck: todayISO() });
+  const before = s.scihubMirror;
+  const res = await findWorkingMirror(before);
+  if (!res.changed) return;
+  setSettings({ scihubMirror: res.mirror });
+  refreshLinks();
+  toast(`Sci-Hub: ${host(before)} stopped answering → switched to ${host(res.mirror)}`);
+}
+
+/** Settings → "Check mirrors now": probe every mirror and show the result. */
+async function checkMirrorsNow() {
+  const box = $('#mirror-status');
+  if (!box) return;
+  box.innerHTML = '<p class="muted small"><span class="spinner"></span> Checking mirrors…</p>';
+  const list = [...new Set([normalizeMirror(S.settings.scihubMirror), ...SCIHUB_MIRRORS])];
+  const up = await Promise.all(list.map((m) => probeMirror(m)));
+  const status = Object.fromEntries(list.map((m, i) => [m, up[i]]));
+  setSettings({ mirrorCheck: todayISO() });
+  const cur = normalizeMirror(S.settings.scihubMirror);
+  if (!status[cur] && S.settings.autoMirror) {
+    const first = list.find((m) => status[m]);
+    if (first) {
+      setSettings({ scihubMirror: first });
+      $('#settings-form [name="scihubMirror"]').value = first;
+      refreshLinks();
+      toast(`${host(cur)} is down → switched to ${host(first)}`);
+    }
+  }
+  renderMirrorStatus(status);
+}
+
+function renderMirrorStatus(status) {
+  const box = $('#mirror-status');
+  if (!box) return;
+  const cur = normalizeMirror(S.settings.scihubMirror);
+  box.innerHTML = `<ul class="mirrors">${Object.entries(status).map(([m, ok]) => `
+    <li class="${ok ? 'up' : 'down'}"><span>${ok ? '●' : '○'} ${esc(host(m))}</span>
+      ${m === cur ? '<span class="badge saved">default</span>'
+        : ok ? `<button type="button" class="btn small" data-use-mirror="${esc(m)}">Use</button>` : '<span class="muted small">not answering</span>'}</li>`).join('')}</ul>
+    <p class="muted small">● = the mirror answers. A mirror can answer and still show a captcha instead of the paper; if that happens, pick another one.</p>`;
+  box.dataset.status = JSON.stringify(status);
 }
 
 /* ═══ persistence & sync ══════════════════════════════════════════════════ */
@@ -241,8 +353,10 @@ async function search({ append = false, raw } = {}) {
   S.results = append ? S.results.concat(fresh) : fresh;
   S.loading = false;
   if (!append && S.results.length && S.sel < 0 && window.matchMedia('(min-width: 1100px)').matches) S.sel = 0;
+  fresh.forEach(applyOa);
   renderResults();
   renderDetail();
+  findFreeCopies(fresh);
 }
 
 async function loadLensCounts() {
@@ -465,7 +579,7 @@ function card(p, i) {
     ${p.abstract ? `<p class="card-abs">${esc(p.abstract.slice(0, 420))}</p>` : ''}
     ${S.view === 'library' && lib?.note ? `<p class="card-note">✎ ${esc(lib.note)}</p>` : ''}
     <div class="card-actions">
-      ${p.freeUrl ? `<a class="act free" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="Free full text (p)">Free full text ${kbd('p')}</a>` : ''}
+      ${p.freeUrl ? `<a class="act free" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || 'Free full text')} (p)">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="act oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer" title="Find a legal free copy via Unpaywall (u)">Unpaywall ${kbd('u')}</a>` : ''}
       ${sh ? `<a class="act sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer" title="Open via Sci-Hub (h)">Sci-Hub ${kbd('h')}</a>` : ''}
       <button class="act ${saved ? 'on' : ''}" data-act="save" data-i="${i}" title="Save / unsave (s)">${saved ? '★ Saved' : '☆ Save'} ${kbd('s')}</button>
@@ -547,11 +661,14 @@ function renderDetail() {
     <div class="d-badges">${(p.badges || []).map(badge).join('')}</div>
     <div class="d-actions">
       <a class="btn" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Open record ${kbd('o')}</a>
-      ${p.freeUrl ? `<a class="btn primary" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer">Free full text ${kbd('p')}</a>` : ''}
+      ${p.freeUrl ? `<a class="btn primary" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || '')}">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="btn oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer">Unpaywall ${kbd('u')}</a>` : ''}
       ${sh ? `<a class="btn sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer">Sci-Hub ${kbd('h')}</a>
         <button class="btn small sh" data-act="scihub-next" title="Mirror down? Open the same paper on the next Sci-Hub mirror">Other mirror ${kbd('⇧H')}</button>` : ''}
+      ${annasUrl(p) ? `<a class="btn small sh" href="${esc(annasUrl(p))}" target="_blank" rel="noopener noreferrer" title="Anna's Archive SciDB — when Sci-Hub doesn't have it">Anna's Archive ${kbd('a')}</a>` : ''}
     </div>
+    ${p.freeVia ? `<p class="muted small">Free copy found via ${esc(p.freeVia)}</p>`
+      : p.doi && !p.freeUrl && !S.settings.email ? `<p class="muted small">Tip: add your email in Settings (${kbd(',')}) and Unpaywall will mark legal free copies right in your results.</p>` : ''}
     ${p.keywords?.length ? `<p class="d-kw">${p.keywords.slice(0, 12).map((k) => `<span class="chip static">${esc(k)}</span>`).join('')}</p>` : ''}
     <h3>Abstract</h3>
     <p class="d-abs">${p.abstract ? esc(p.abstract) : '<span class="muted">No abstract in this record — open it or try the free-access buttons.</span>'}</p>
@@ -620,10 +737,12 @@ function renderLibrary() {
     `<button class="lens ${S.libStatus === s ? 'on' : ''}" data-libstatus="${s}">${s}<span class="lens-n">${s === 'all' ? all.length : counts[s]}</span></button>`).join('');
   renderFollows();
   const items = libraryList();
+  items.forEach(applyOa);
   $('#lib-results').innerHTML = items.length
     ? `<div class="cards">${items.map(card).join('')}</div>`
     : `<div class="empty small"><h2>${all.length ? 'No saved paper matches this filter.' : 'Your library is empty.'}</h2>
        <p>Press ${kbd('s')} on any result to keep it here with your notes, tags and reading status. Export to Zotero/Mendeley (RIS), LaTeX (BibTeX) or a spreadsheet (CSV) anytime.</p></div>`;
+  findFreeCopies(items);
 }
 
 function renderView() {
@@ -772,7 +891,7 @@ function openHelp() {
   const rows = [
     ['Search', [['/', 'Focus the search box'], ['Enter', 'Search in-page'], ['⇧ Enter', 'Send query to the first site of this mode'], ['!bang', 'e.g. “sepsis !has” opens HAS — Tab completes'], ['↓ / Esc', 'Leave the box to navigate results'], ['↑ (empty box)', 'Recall your last search']]],
     ['Modes & filters', [['1 2 3', 'General · Medical · Thesis (Alt+1/2/3 from inside a box)'], ['[ ]', 'Evidence level: guidelines → SR/MA → RCT → reviews → all'], ['f', 'Follow this search (new papers appear in Library)'], ['e', 'Send the query to any of the external sites']]],
-    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['m', 'Load more']]],
+    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep that mirror as your default'], ['a', "Anna's Archive (when Sci-Hub lacks it)"], ['m', 'Load more']]],
     ['Library', [['s', 'Save / remove'], ['n', 'Write a note'], ['r', 'Cycle status: to-read → reading → read'], ['c', 'Copy Vancouver citation'], ['b', 'Copy BibTeX'], ['l', 'Library ⇄ search'], ['S', 'Sync with Google Drive']]],
     ['Anywhere', [['Ctrl/⌘ K', 'Command palette'], ['t', 'Light / dark / auto theme'], [',', 'Settings'], ['?', 'This help'], ['Esc', 'Close whatever is open']]],
   ];
@@ -794,16 +913,26 @@ function openSettings(focus) {
         <button type="button" class="btn small" data-cmd="clear-history">Clear recent searches</button>
       </fieldset>
       <fieldset><legend>Free access</legend>
-        <label class="chk"><input type="checkbox" name="showScihub" ${s.showScihub ? 'checked' : ''}> Show the Sci-Hub button</label>
+        <label>Your email <input name="email" type="email" value="${esc(s.email)}" placeholder="you@example.org"></label>
+        <label class="chk"><input type="checkbox" name="oaCheck" ${s.oaCheck ? 'checked' : ''}> Mark legal free copies in results (Unpaywall)</label>
+        <p class="muted small">Unpaywall asks for an email, so this only works once you set one. It then receives the DOIs of your results (not your search words) and turns on the green ${kbd('p')} button wherever a free copy exists. Crossref and OpenAlex also get your email as a courtesy, which gives faster, more reliable answers.</p>
+        <label class="chk"><input type="checkbox" name="showScihub" ${s.showScihub ? 'checked' : ''}> Show the Sci-Hub and Anna's Archive buttons</label>
         <label>Sci-Hub mirror
           <input name="scihubMirror" list="scihub-mirrors" value="${esc(s.scihubMirror)}" placeholder="${esc(SCIHUB_MIRRORS[0])}">
           <datalist id="scihub-mirrors">${SCIHUB_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
         </label>
-        <p class="muted small">Pick a mirror or type another. Mirrors go up and down — <a href="${SCIHUB_STATUS_PAGE}" target="_blank" rel="noopener noreferrer">sci-hub.works</a> shows which ones work today (it is a list, not a mirror). ${kbd('⇧H')} on a paper tries the next mirror. Check what is legal where you live — Unpaywall only finds legal open-access copies.</p>
+        <label class="chk"><input type="checkbox" name="autoMirror" ${s.autoMirror ? 'checked' : ''}> Switch automatically when this mirror stops answering</label>
+        <p class="muted small">Checked at most once a day, and only once you have used Sci-Hub. On a paper, ${kbd('⇧H')} tries the next mirror and ${kbd('⇧D')} keeps it.</p>
+        <div class="d-actions"><button type="button" class="btn small" data-cmd="check-mirrors">Check mirrors now</button>
+          <a class="btn small" href="${SCIHUB_STATUS_PAGE}" target="_blank" rel="noopener noreferrer">sci-hub.works status page ↗</a></div>
+        <div id="mirror-status"></div>
+        <label>Anna's Archive domain
+          <input name="annasMirror" list="annas-mirrors" value="${esc(s.annasMirror)}" placeholder="${esc(ANNAS_MIRRORS[0])}">
+          <datalist id="annas-mirrors">${ANNAS_MIRRORS.map((m) => `<option value="${m}">`).join('')}</datalist>
+        </label>
+        <p class="muted small">Check what is legal where you live — Unpaywall only finds legal open-access copies.</p>
       </fieldset>
       <fieldset><legend>Better results (optional)</legend>
-        <label>Email <input name="email" type="email" value="${esc(s.email)}" placeholder="you@example.org"></label>
-        <p class="muted small">Sent only to Crossref/OpenAlex as a courtesy (“polite pool” — faster, more reliable).</p>
         <label>OpenAlex API key <input name="openalexKey" value="${esc(s.openalexKey)}" placeholder="free at openalex.org/settings/api"></label>
         <p class="muted small">Adds OpenAlex (250 M works, open-access links) to General and Thesis modes.</p>
       </fieldset>
@@ -830,6 +959,9 @@ function saveSettingsForm(form) {
     history: f.has('history'),
     showScihub: f.has('showScihub'),
     scihubMirror: normalizeMirror(f.get('scihubMirror')),
+    autoMirror: f.has('autoMirror'),
+    annasMirror: normalizeOrigin(f.get('annasMirror'), ANNAS_MIRRORS[0]),
+    oaCheck: f.has('oaCheck'),
     email: (f.get('email') || '').trim(),
     openalexKey: (f.get('openalexKey') || '').trim(),
     googleClientId: (f.get('googleClientId') || '').trim(),
@@ -838,6 +970,7 @@ function saveSettingsForm(form) {
   renderMode();
   renderView();
   renderSyncPill();
+  findFreeCopies(list()); // a newly added email lights up free copies at once
   toast('Settings saved');
 }
 
@@ -892,8 +1025,13 @@ function act(name, p = current()) {
     case 'unpaywall': return unpaywallUrl(p) ? openUrl(unpaywallUrl(p)) : toast('No DOI — Unpaywall needs one');
     case 'scihub':
       if (!S.settings.showScihub) return toast('Sci-Hub button is off (Settings)');
-      return scihubUrl(p) ? openUrl(scihubUrl(p)) : toast('No DOI or PMID for this record');
+      if (!scihubUrl(p)) return toast('No DOI or PMID for this record');
+      markScihubUsed();
+      return openUrl(scihubUrl(p));
     case 'scihub-next': return scihubNextMirror(p);
+    case 'annas':
+      if (!S.settings.showScihub) return toast("Anna's Archive button is off (Settings)");
+      return annasUrl(p) ? openUrl(annasUrl(p)) : toast("No DOI — Anna's Archive SciDB needs one");
     case 'detail':
       S.detail = !S.detail;
       return renderDetail();
@@ -974,6 +1112,8 @@ function onKey(e) {
     u: () => act('unpaywall'),
     h: () => act('scihub'),
     H: () => act('scihub-next'),
+    D: () => adoptMirror(),
+    a: () => act('annas'),
     s: () => act('save'),
     c: () => act('cite'),
     b: () => act('bibtex'),
@@ -1038,7 +1178,8 @@ function onSearchKey(e) {
 }
 
 function onClick(e) {
-  const t = e.target.closest('[data-mode],[data-lens],[data-bang],[data-cmd],[data-act],[data-recent],[data-libstatus],[data-follow-run],[data-follow-del],[data-pal],[data-close],.card');
+  if (e.target.closest('a.sh')) markScihubUsed(); // clicked a Sci-Hub link
+  const t = e.target.closest('[data-mode],[data-lens],[data-bang],[data-cmd],[data-act],[data-recent],[data-libstatus],[data-follow-run],[data-follow-del],[data-pal],[data-close],[data-use-mirror],.card');
   if (!t) return;
   const d = t.dataset;
   if (d.close !== undefined) return t.closest('dialog').close();
@@ -1050,6 +1191,13 @@ function onClick(e) {
   if (d.followRun) return runFollow(d.followRun);
   if (d.followDel) { setLibrary(store.removeFollow(S.library, d.followDel)); return renderFollows(); }
   if (d.pal) return runPalette(Number(d.pal));
+  if (d.useMirror) {
+    setSettings({ scihubMirror: d.useMirror });
+    $('#settings-form [name="scihubMirror"]').value = d.useMirror;
+    renderMirrorStatus(JSON.parse($('#mirror-status').dataset.status || '{}'));
+    refreshLinks();
+    return toast(`Default Sci-Hub mirror is now ${host(d.useMirror)}`);
+  }
   if (d.act) {
     const card = t.closest('.card');
     if (card) select(Number(card.dataset.i), { scroll: false });
@@ -1072,6 +1220,7 @@ function onClick(e) {
       'export-csv': () => exportLib('csv'),
       'export-json': () => exportLib('json'),
       'import-json': () => $('#import-file').click(),
+      'check-mirrors': checkMirrorsNow,
       'clear-history': () => { store.clearHistory(); S.history = []; toast('Recent searches cleared'); },
     }[d.cmd] || (() => {}))();
   }
@@ -1161,6 +1310,7 @@ function boot() {
     try { localStorage.setItem('saio2.followCheck', todayISO()); } catch { /* private mode */ }
     setTimeout(checkFollows, 1500);
   }
+  setTimeout(autoCheckMirror, 3000);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
