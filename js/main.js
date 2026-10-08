@@ -595,14 +595,44 @@ function authorsShort(a = []) {
   return a.length > 4 ? `${a.slice(0, 3).join(', ')} … ${a[a.length - 1]}` : a.join(', ');
 }
 
+/*
+ * Sci-Hub stopped adding papers in 2021; Anna's Archive SciDB holds all of
+ * Sci-Hub *plus* newer papers. /scidb/<doi> shows the PDF when SciDB has it,
+ * and otherwise redirects to its journal search, which lists external links.
+ * So: older papers → Sci-Hub first, papers from 2021 on → SciDB first.
+ */
+const SCIHUB_PAUSED = 2021;
+const scidbFirst = (p) => (p.year || 0) >= SCIHUB_PAUSED;
+
+function shadowLinks(p, cls) {
+  const sh = scihubUrl(p);
+  const aa = annasUrl(p);
+  const late = scidbFirst(p);
+  const scihub = sh ? `<a class="${cls} sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer"
+    title="${late ? `Sci-Hub stopped adding papers in ${SCIHUB_PAUSED}, so it may not have this ${p.year} paper — try SciDB (a)` : 'Open via Sci-Hub'} (h)">Sci-Hub ${kbd('h')}</a>` : '';
+  const scidb = aa ? `<a class="${cls} aa" href="${esc(aa)}" target="_blank" rel="noopener noreferrer"
+    title="SciDB (Anna's Archive): all of Sci-Hub plus newer papers. Shows the PDF if it has it, otherwise its journal search with external download links (a)">SciDB ${kbd('a')}</a>` : '';
+  return late ? scidb + scihub : scihub + scidb;
+}
+
+/** A DOI / PMID you can click to copy (hover says so). */
+const copyChip = (label, value) =>
+  `<button type="button" class="copy-id" data-copy="${esc(value)}" data-copy-label="${label}" data-tip="Click to copy" aria-label="Copy ${label} ${esc(value)}">${label === 'DOI' ? 'doi:' : 'PMID '}${esc(value)}</button>`;
+
+function copyId(btn, label, value) {
+  copy(value, `${label} copied — ${value}`);
+  btn.classList.add('copied');
+  btn.dataset.tip = 'Copied ✓';
+  setTimeout(() => { btn.classList.remove('copied'); btn.dataset.tip = 'Click to copy'; }, 1400);
+}
+
 function card(p, i) {
   const saved = store.isSaved(S.library, p.id);
   const lib = S.library.items[p.id];
   const un = unpaywallUrl(p);
-  const sh = scihubUrl(p);
   const meta = [p.year, p.venue].filter(Boolean).map(esc).join(' · ');
   return `<article class="card ${i === S.sel ? 'sel' : ''}" data-i="${i}" id="card-${i}">
-    <div class="card-meta"><span>${meta}</span>${(p.badges || []).map(badge).join('')}
+    <div class="card-meta"><span>${meta}</span>${p.doi ? copyChip('DOI', p.doi) : ''}${(p.badges || []).map(badge).join('')}
       ${p.citedBy ? `<span class="cited" title="Times cited">❝ ${p.citedBy}</span>` : ''}
       ${saved ? `<span class="badge saved" title="In your library">★ ${esc(lib.status)}</span>` : ''}</div>
     <h3 class="card-title"><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" data-i="${i}">${esc(p.title)}</a></h3>
@@ -613,7 +643,7 @@ function card(p, i) {
     <div class="card-actions">
       ${p.freeUrl ? `<a class="act free" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || 'Free full text')} (p)">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="act oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer" title="Find a legal free copy via Unpaywall (u)">Unpaywall ${kbd('u')}</a>` : ''}
-      ${sh ? `<a class="act sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer" title="Open via Sci-Hub (h)">Sci-Hub ${kbd('h')}</a>` : ''}
+      ${shadowLinks(p, 'act')}
       <button class="act ${saved ? 'on' : ''}" data-act="save" data-i="${i}" title="Save / unsave (s)">${saved ? '★ Saved' : '☆ Save'} ${kbd('s')}</button>
       <button class="act" data-act="cite" data-i="${i}" title="Copy Vancouver citation (c)">Cite ${kbd('c')}</button>
       <button class="act" data-act="detail" data-i="${i}" title="Details, abstract, notes (Enter)">Details ${kbd('↵')}</button>
@@ -682,24 +712,25 @@ function renderDetail() {
   const saved = store.isSaved(S.library, p.id);
   const lib = S.library.items[p.id] || {};
   const un = unpaywallUrl(p);
-  const sh = scihubUrl(p);
   pane.innerHTML = `
     <div class="d-head"><span class="muted">${esc(p.source)} · ${esc(p.kind)}</span>
       <button class="icon-btn" data-cmd="close-detail" aria-label="Close details" title="Close (Esc)">✕</button></div>
     <h2 class="d-title">${esc(p.title)}</h2>
     <p class="d-authors">${esc((p.authors || []).join(', '))}</p>
     ${p.supervisors?.length ? `<p class="d-authors">Supervised by ${esc(p.supervisors.join(', '))}</p>` : ''}
-    <p class="muted">${[p.venue, p.year, p.doi && `doi:${p.doi}`, p.pmid && `PMID ${p.pmid}`].filter(Boolean).map(esc).join(' · ')}</p>
+    <p class="muted d-ids">${[p.venue, p.year].filter(Boolean).map(esc).join(' · ')} ${p.doi ? copyChip('DOI', p.doi) : ''} ${p.pmid ? copyChip('PMID', p.pmid) : ''}</p>
     <div class="d-badges">${(p.badges || []).map(badge).join('')}</div>
     <div class="d-actions">
       <a class="btn" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Open record ${kbd('o')}</a>
       ${p.freeUrl ? `<a class="btn primary" href="${esc(p.freeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(p.freeVia || '')}">${p.freePdf ? 'Free PDF' : 'Free full text'} ${kbd('p')}</a>` : ''}
       ${un ? `<a class="btn oa" href="${esc(un)}" target="_blank" rel="noopener noreferrer">Unpaywall ${kbd('u')}</a>` : ''}
-      ${sh ? `<a class="btn sh" href="${esc(sh)}" target="_blank" rel="noopener noreferrer">Sci-Hub ${kbd('h')}</a>
-        <button class="btn small sh" data-act="scihub-next" title="Mirror down? Open the same paper on the next Sci-Hub mirror">Other mirror ${kbd('⇧H')}</button>` : ''}
-      ${annasUrl(p) ? `<a class="btn small aa" href="${esc(annasUrl(p))}" target="_blank" rel="noopener noreferrer" title="Anna's Archive SciDB — when Sci-Hub doesn't have it">Anna's Archive ${kbd('a')}</a>
-        <button class="btn small aa" data-act="annas-next" title="Domain down? Open the same paper on the next Anna's Archive domain">Other domain ${kbd('⇧A')}</button>` : ''}
+      ${shadowLinks(p, 'btn')}
     </div>
+    ${scihubUrl(p) || annasUrl(p) ? `<div class="d-actions">
+      ${scihubUrl(p) ? `<button class="btn small sh" data-act="scihub-next" title="Mirror down? Open the same paper on the next Sci-Hub mirror">Sci-Hub: other mirror ${kbd('⇧H')}</button>` : ''}
+      ${annasUrl(p) ? `<button class="btn small aa" data-act="annas-next" title="Domain down? Open the same paper on the next Anna's Archive domain">SciDB: other domain ${kbd('⇧A')}</button>` : ''}
+    </div>` : ''}
+    ${annasUrl(p) && scidbFirst(p) ? `<p class="muted small">Published ${esc(p.year)}: Sci-Hub stopped adding papers in ${SCIHUB_PAUSED}, so SciDB comes first. If SciDB doesn't have it either, it opens its journal search with external links.</p>` : ''}
     ${p.freeVia ? `<p class="muted small">Free copy found via ${esc(p.freeVia)}</p>`
       : p.doi && !p.freeUrl && !S.settings.email ? `<p class="muted small">Tip: add your email in Settings (${kbd(',')}) and Unpaywall will mark legal free copies right in your results.</p>` : ''}
     ${p.keywords?.length ? `<p class="d-kw">${p.keywords.slice(0, 12).map((k) => `<span class="chip static">${esc(k)}</span>`).join('')}</p>` : ''}
@@ -924,8 +955,8 @@ function openHelp() {
   const rows = [
     ['Search', [['/', 'Focus the search box'], ['Enter', 'Search in-page'], ['⇧ Enter', 'Send query to the first site of this mode'], ['!bang', 'e.g. “sepsis !has” opens HAS — Tab completes'], ['↓ / Esc', 'Leave the box to navigate results'], ['↑ (empty box)', 'Recall your last search'], ['ISBN', "Type a book's ISBN: Enter → Anna's Archive · ⇧Enter → Open Library"]]],
     ['Modes & filters', [['1 2 3', 'General · Medical · Thesis (Alt+1/2/3 from inside a box)'], ['[ ]', 'Evidence level: guidelines → SR/MA → RCT → reviews → all'], ['f', 'Follow this search (new papers appear in Library)'], ['e', 'Send the query to any of the external sites']]],
-    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep the mirror ⇧H / ⇧A just opened'], ['a', "Anna's Archive (when Sci-Hub lacks it)"], ['A', "Anna's Archive on the next domain"], ['m', 'Load more']]],
-    ['Library', [['s', 'Save / remove'], ['n', 'Write a note'], ['r', 'Cycle status: to-read → reading → read'], ['c', 'Copy Vancouver citation'], ['b', 'Copy BibTeX'], ['l', 'Library ⇄ search'], ['S', 'Sync with Google Drive']]],
+    ['Results', [['j / k', 'Next / previous'], ['g g / G', 'First / last'], ['Enter', 'Toggle details pane'], ['o', 'Open the record'], ['p', 'Free full text, when known'], ['u', 'Unpaywall — legal open-access copy'], ['h', 'Sci-Hub'], ['H', 'Sci-Hub on the next mirror (if one is down)'], ['D', 'Keep the mirror ⇧H / ⇧A just opened'], ['a', 'SciDB (Anna\'s Archive) — first choice for papers from 2021 on'], ['A', 'SciDB on the next domain'], ['m', 'Load more']]],
+    ['Library', [['s', 'Save / remove'], ['n', 'Write a note'], ['r', 'Cycle status: to-read → reading → read'], ['c', 'Copy Vancouver citation'], ['b', 'Copy BibTeX'], ['y', 'Copy the DOI (or PMID) — or click it'], ['l', 'Library ⇄ search'], ['S', 'Sync with Google Drive']]],
     ['Anywhere', [['Ctrl/⌘ K', 'Command palette'], ['t', 'Light / dark / auto theme'], [',', 'Settings'], ['?', 'This help'], ['Esc', 'Close whatever is open']]],
   ];
   $('#dlg-help').innerHTML = `<div class="dlg-head"><h2 id="help-title">Keyboard</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
@@ -1054,6 +1085,12 @@ function act(name, p = current()) {
     case 'cite': return copy(cite.vancouver(p), 'Vancouver citation copied');
     case 'bibtex': return copy(cite.bibtex(p), 'BibTeX copied');
     case 'ris': return copy(cite.ris(p), 'RIS copied');
+    case 'copy-id': {
+      const [label, value] = p.doi ? ['DOI', p.doi] : p.pmid ? ['PMID', p.pmid] : [];
+      if (!value) return toast('No DOI or PMID for this record');
+      const chip = $(`.card.sel .copy-id, #${S.view === 'library' ? 'lib-detail' : 'detail'} .copy-id`);
+      return chip ? copyId(chip, label, value) : copy(value, `${label} copied — ${value}`);
+    }
     case 'open': return openUrl(p.url);
     case 'free': return p.freeUrl ? openUrl(p.freeUrl) : act('unpaywall', p);
     case 'unpaywall': return unpaywallUrl(p) ? openUrl(unpaywallUrl(p)) : toast('No DOI — Unpaywall needs one');
@@ -1155,6 +1192,7 @@ function onKey(e) {
     s: () => act('save'),
     c: () => act('cite'),
     b: () => act('bibtex'),
+    y: () => act('copy-id'),
     n: () => act('note'),
     r: () => act('status'),
     m: () => hasMore() && !S.loading && search({ append: true }),
@@ -1220,7 +1258,7 @@ function onSearchKey(e) {
 function onClick(e) {
   if (e.target.closest('a.sh')) markUsed('scihub'); // clicked a Sci-Hub link
   if (e.target.closest('a.aa')) markUsed('annas');
-  const t = e.target.closest('[data-mode],[data-lens],[data-bang],[data-cmd],[data-act],[data-recent],[data-libstatus],[data-follow-run],[data-follow-del],[data-pal],[data-close],[data-use-mirror],.card');
+  const t = e.target.closest('[data-copy],[data-mode],[data-lens],[data-bang],[data-cmd],[data-act],[data-recent],[data-libstatus],[data-follow-run],[data-follow-del],[data-pal],[data-close],[data-use-mirror],.card');
   if (!t) return;
   const d = t.dataset;
   if (d.close !== undefined) return t.closest('dialog').close();
@@ -1232,6 +1270,7 @@ function onClick(e) {
   if (d.followRun) return runFollow(d.followRun);
   if (d.followDel) { setLibrary(store.removeFollow(S.library, d.followDel)); return renderFollows(); }
   if (d.pal) return runPalette(Number(d.pal));
+  if (d.copy) return copyId(t, d.copyLabel, d.copy);
   if (d.useMirror) {
     const family = d.family || 'scihub';
     setSettings({ [mirrorKey(family)]: d.useMirror });
